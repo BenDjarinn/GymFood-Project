@@ -6,7 +6,7 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import ThemedView from "@shared/components/ui/ThemedView";
 import ThemedText from "@shared/components/ui/ThemedText";
 
-import BankAccountCard, { BankAccountData } from "modules/checkout/components/BankAccountCard";
+import BankAccountCard, { BankAccountData} from "@/modules/checkout/components/BankAccountCard";
 import bankAccounts from "@/data/bankAccount.json";
 
 import { LoadingOverlay } from "@/shared/components/ui/LoadingOverlay";
