@@ -32,6 +32,13 @@ export default function CreatePostScreen() {
   const [descFocused, setDescFocused] = useState(false);
   const [imageUri, setImageUri] = useState<string | null>(null);
 
+  const isFormValid = title.trim().length > 0 && description.trim().length > 0;
+
+  const handlePost = () => {
+    if (!isFormValid) return;
+
+  };
+
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
@@ -157,6 +164,20 @@ export default function CreatePostScreen() {
           onFocus={() => setDescFocused(true)}
           onBlur={() => setDescFocused(false)}
         />
+
+        {/* ── Post Button ── */}
+        <Pressable
+          onPress={handlePost}
+          disabled={!isFormValid}
+          style={({ pressed }) => [
+            styles.postButton,
+            !isFormValid && styles.postButtonDisabled,
+            pressed && isFormValid && { opacity: 0.85, transform: [{ scale: 0.97 }] },
+          ]}
+        >
+          <ThemedText style={styles.postButtonText}>Checkout</ThemedText>
+          <MaterialIcons name="send" size={26} color="#fff" />
+        </Pressable>
       </ScrollView>
     </ThemedView>
   );
@@ -324,5 +345,29 @@ const styles = StyleSheet.create({
 
   textAreaFocused: {
     borderColor: "#34699A",
+  },
+
+  /* ── Post Button ── */
+  postButton: {
+    backgroundColor: "#4CAF50",
+    borderRadius: 14,
+    paddingVertical: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    marginTop: 30,
+    width: '60%',
+    alignSelf: 'center'
+  },
+
+  postButtonDisabled: {
+    backgroundColor: "#A8D5AB",
+  },
+
+  postButtonText: {
+    color: "#fff",
+    fontSize: 18,
+    fontFamily: "SF-Pro-DisplayBold",
   },
 });

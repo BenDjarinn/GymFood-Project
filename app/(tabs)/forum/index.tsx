@@ -1,12 +1,29 @@
 import React, { useState } from "react";
-import { View, StyleSheet, TextInput, Pressable } from "react-native";
+import { View, ScrollView, StyleSheet, TextInput, Pressable } from "react-native";
 import { router } from "expo-router";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 
 import ThemedView from "@shared/components/ui/ThemedView";
+import ForumPost from "@modules/consultation/components/ForumPost";
+
+import forumPosts from "@/data/forumPosts.json";
+
+interface ForumPostData {
+  author_name: string;
+  author_avatar: string;
+  title: string;
+  category?: string;
+  image: string;
+  description: string;
+  likes: number;
+  comments: number;
+  bookmarks: number;
+}
 
 export default function ForumScreen() {
   const [searchText, setSearchText] = useState("");
+
+  const posts = forumPosts as ForumPostData[];
 
   return (
     <ThemedView style={styles.container}>
@@ -33,6 +50,27 @@ export default function ForumScreen() {
           <MaterialIcons name="add" size={26} color="#34699A" />
         </Pressable>
       </View>
+
+      {/* FORUM POSTS */}
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+      >
+        {posts.map((post, index) => (
+          <ForumPost
+            key={`${post.title}-${index}`}
+            author_name={post.author_name}
+            author_avatar={post.author_avatar}
+            title={post.title}
+            image={post.image}
+            description={post.description}
+            likes={post.likes}
+            comments={post.comments}
+            bookmarks={post.bookmarks}
+            category={post.category}
+          />
+        ))}
+      </ScrollView>
     </ThemedView>
   );
 }
@@ -78,5 +116,11 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
+  },
+
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 40,
   },
 });
