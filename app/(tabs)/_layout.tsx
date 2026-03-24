@@ -27,7 +27,7 @@ const TabIcon = ({
 export default function TabsLayout() {
   return (
     <Tabs
-      initialRouteName="index"
+      initialRouteName="home"
       screenOptions={{
         tabBarActiveTintColor: "#4A7EB8",
         tabBarInactiveTintColor: "#8E8E93",
@@ -46,6 +46,12 @@ export default function TabsLayout() {
         },
       }}
     >
+      <Tabs.Screen
+        name="index"
+        options={{
+          href: null,
+        }}
+      />
       <Tabs.Screen
         name="forum"
         options={{
@@ -67,7 +73,7 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="index"
+        name="home"
         options={{
           title: "Home",
           headerShown: false,

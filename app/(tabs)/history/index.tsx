@@ -10,13 +10,16 @@ import { router } from "expo-router";
 import ThemedView from "@shared/components/ui/ThemedView";
 import ThemedText from "@shared/components/ui/ThemedText";
 import OrderHistoryCard from "@modules/checkout/components/OrderHistoryCard";
+import ConsultationHistoryCard from "@modules/consultation/components/ConsultationHistoryCard";
 import { useOrderHistoryStore } from "@modules/cart/store/useOrderHistoryStore";
+import { useConsultationHistoryStore } from "@modules/consultation/store/useConsultationHistoryStore";
 
 const TABS = ["Food", "Loyalty Program"];
 
 export default function HistoryScreen() {
   const [activeTab, setActiveTab] = useState("Food");
   const orders = useOrderHistoryStore((s) => s.orders);
+  const consultationOrders = useConsultationHistoryStore((s) => s.orders);
 
   return (
     <ThemedView style={styles.container}>
@@ -73,9 +76,25 @@ export default function HistoryScreen() {
       )}
 
       {activeTab === "Loyalty Program" && (
-        <View style={styles.emptyWrap}>
-          <ThemedText style={styles.emptyText}>Coming soon.</ThemedText>
-        </View>
+        <>
+          {consultationOrders.length === 0 ? (
+            <View style={styles.emptyWrap}>
+              <ThemedText style={styles.emptyText}>
+                No consultation history yet.
+              </ThemedText>
+            </View>
+          ) : (
+            <FlatList
+              data={consultationOrders}
+              keyExtractor={(item) => item.id}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 40 }}
+              renderItem={({ item }) => (
+                <ConsultationHistoryCard order={item} />
+              )}
+            />
+          )}
+        </>
       )}
     </ThemedView>
   );
@@ -132,3 +151,4 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
 });
+

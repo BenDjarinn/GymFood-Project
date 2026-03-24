@@ -1,0 +1,37 @@
+export interface SubscriptionPlan {
+  subscription_plan: string;
+  important_notes: string[];
+  image: string;
+}
+
+const subscriptionPlans: SubscriptionPlan[] = [
+  {
+    subscription_plan: "Beginner",
+    important_notes: [
+      "💪 Basic exercises using simple equipment",
+      "🧑‍🏫 Step-by-step guidance from an instructor",
+      "🕒 Flexible schedule & light intensity",
+    ],
+    image: "beginner.png",
+  },
+  {
+    subscription_plan: "Advanced",
+    important_notes: [
+      "🔥 Intense strength & cardio combination training",
+      "🧑‍🏫 Personal trainer for progress evaluation",
+      "🧘 Access to additional classes (HIIT, yoga, pilates)",
+    ],
+    image: "advanced.png",
+  },
+  {
+    subscription_plan: "Pro",
+    important_notes: [
+      "🏋️ Full access to all gym facilities & exclusive classes",
+      "🧑‍🏫 1-on-1 coaching with a senior trainer",
+      "🍽️ Personalized nutrition plan & dedicated meal prep support",
+    ],
+    image: "pro.png",
+  },
+];
+
+export default subscriptionPlans;

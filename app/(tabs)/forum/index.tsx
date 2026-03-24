@@ -6,19 +6,7 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import ThemedView from "@shared/components/ui/ThemedView";
 import ForumPost from "@modules/consultation/components/ForumPost";
 
-import forumPosts from "@/data/forumPosts.json";
-
-interface ForumPostData {
-  author_name: string;
-  author_avatar: string;
-  title: string;
-  category?: string;
-  image: string;
-  description: string;
-  likes: number;
-  comments: number;
-  bookmarks: number;
-}
+import forumPosts, { ForumPostData } from "@/data/forumPosts";
 
 export default function ForumScreen() {
   const [searchText, setSearchText] = useState("");

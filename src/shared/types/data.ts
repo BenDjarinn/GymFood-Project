@@ -54,3 +54,17 @@ export interface OrderHistoryState {
   orders: CompletedOrder[];
   addOrder: (order: CompletedOrder) => void;
 }
+
+// Consultation order history types
+export interface CompletedConsultationOrder {
+  id: string;
+  planName: string;       // "Beginner" | "Advanced" | "Pro"
+  planImage: string;      // key for subscriptionPlanImages, e.g. "beginner.png"
+  planNotes: string[];    // the bullet-point notes
+  paidAt: string;         // ISO timestamp
+}
+
+export interface ConsultationHistoryState {
+  orders: CompletedConsultationOrder[];
+  addOrder: (order: CompletedConsultationOrder) => void;
+}

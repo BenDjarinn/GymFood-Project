@@ -1,4 +1,4 @@
-import MEALS from "@/data/meals.json";
+import meals from "@/data/meals";
 import { Meal, CartById } from "@shared/types/data";
 
 interface CartItem {
@@ -9,7 +9,7 @@ interface CartItem {
 export const buildCartItems = (cartById: CartById): CartItem[] => {
   return Object.entries(cartById)
     .map(([mealId, qty]) => ({
-      meal: MEALS.find((m) => m.id === mealId),
+      meal: meals.find((m) => m.id === mealId),
       qty,
     }))
     .filter((x) => x.meal && (x.qty ?? 0) > 0);

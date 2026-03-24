@@ -175,7 +175,7 @@ export default function CreatePostScreen() {
             pressed && isFormValid && { opacity: 0.85, transform: [{ scale: 0.97 }] },
           ]}
         >
-          <ThemedText style={styles.postButtonText}>Checkout</ThemedText>
+          <ThemedText style={styles.postButtonText}>Post</ThemedText>
           <MaterialIcons name="send" size={26} color="#fff" />
         </Pressable>
       </ScrollView>
@@ -356,8 +356,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 12,
-    marginTop: 30,
-    width: '60%',
+    marginTop: 10,
+    width: '100%',
     alignSelf: 'center'
   },
 

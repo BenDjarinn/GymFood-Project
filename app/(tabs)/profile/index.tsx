@@ -5,7 +5,7 @@ import ThemedView from "@shared/components/ui/ThemedView";
 import ThemedText from "@shared/components/ui/ThemedText";
 import { SettingsItem } from "@modules/profile";
 
-import settingsItems from "@/data/settingsItem.json";
+import settingsItems from "@/data/settingsItem";
 
 export default function ProfileScreen() {
   return (

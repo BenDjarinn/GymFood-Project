@@ -1,23 +1,40 @@
 import React, { useEffect, useRef, useState } from "react";
 import { View, StyleSheet, Pressable, FlatList, Animated } from "react-native";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 
 import ThemedView from "@shared/components/ui/ThemedView";
 import ThemedText from "@shared/components/ui/ThemedText";
 
-import BankAccountCard, { BankAccountData} from "@/modules/checkout/components/BankAccountCard";
+import BankAccountCard, {
+  BankAccountData,
+} from "@/modules/checkout/components/BankAccountCard";
 import bankAccounts from "@/data/bankAccount";
 
 import { LoadingOverlay } from "@/shared/components/ui/LoadingOverlay";
 import { SuccessPopup } from "@/shared/components/ui/SuccessPopup";
 
-import { useCartStore } from "@modules/cart/store/useCartStore";
-import { useOrderHistoryStore } from "@modules/cart/store/useOrderHistoryStore";
-import { buildCartItems } from "@modules/cart/utils/cartSelectors";
-import { CompletedOrder } from "@shared/types/data";
+import { useConsultationHistoryStore } from "@modules/consultation/store/useConsultationHistoryStore";
+import { CompletedConsultationOrder } from "@shared/types/data";
 
-const Payment: React.FC = () => {
+const ConsultationPayment: React.FC = () => {
+  const params = useLocalSearchParams<{
+    planId: string;
+    planImage: string;
+    planNotes: string;
+  }>();
+
+  const planId = params.planId ?? "";
+  const planImage = params.planImage ?? "";
+  // planNotes is passed as JSON-encoded string
+  const planNotes: string[] = (() => {
+    try {
+      return JSON.parse(params.planNotes ?? "[]");
+    } catch {
+      return [];
+    }
+  })();
+
   const data = bankAccounts as BankAccountData[];
 
   // ✅ Toast state + animation
@@ -45,7 +62,6 @@ const Payment: React.FC = () => {
   };
 
   const showToast = () => {
-    // reset supaya tap berulang gak numpuk flow
     clearAllTimers();
     setLoadingVisible(false);
     setPopupVisible(false);
@@ -65,7 +81,6 @@ const Payment: React.FC = () => {
       }),
     ]).start();
 
-    // toast tampil 1.6 detik
     timerRef.current = setTimeout(() => {
       Animated.parallel([
         Animated.timing(opacity, {
@@ -83,41 +98,30 @@ const Payment: React.FC = () => {
 
         setToastVisible(false);
 
-        // jeda 0.7 detik setelah toast hilang
         loadingDelayRef.current = setTimeout(() => {
           setLoadingVisible(true);
 
-          // durasi loading (ubah sesuai kebutuhan)
           loadingDoneRef.current = setTimeout(() => {
             setLoadingVisible(false);
 
-            // ✅ Save order to history before showing popup
-            const cartById = useCartStore.getState().cartById;
-            const items = buildCartItems(cartById).filter(
-              (it): it is { meal: NonNullable<typeof it.meal>; qty: number } => !!it.meal
-            );
-            const totalAmount = items.reduce(
-              (sum, it) => sum + it.meal.price * it.qty,
-              0
-            );
-            const order: CompletedOrder = {
-              id: `${Date.now()}`,
-              items: items as any,
-              totalAmount,
+            // ✅ Save consultation order to history
+            const order: CompletedConsultationOrder = {
+              id: `consult-${Date.now()}`,
+              planName: planId,
+              planImage,
+              planNotes,
               paidAt: new Date().toISOString(),
             };
-            useOrderHistoryStore.getState().addOrder(order);
-            useCartStore.getState().clearCart();
+            useConsultationHistoryStore.getState().addOrder(order);
 
             setPopupVisible(true);
-          }, 2500); // <- contoh: 2.5 detik
+          }, 2500);
         }, 700);
       });
     }, 1600);
   };
 
   useEffect(() => {
-    // cleanup timer saat unmount biar aman
     return () => {
       clearAllTimers();
     };
@@ -149,7 +153,7 @@ const Payment: React.FC = () => {
         showsVerticalScrollIndicator={false}
       />
 
-      {/* TOAST BAR (global, bottom screen) */}
+      {/* TOAST BAR */}
       {toastVisible && (
         <Animated.View
           pointerEvents="none"
@@ -159,7 +163,9 @@ const Payment: React.FC = () => {
           ]}
         >
           <View style={styles.toastBar}>
-            <ThemedText style={styles.toastText}>Copied to Clipboard</ThemedText>
+            <ThemedText style={styles.toastText}>
+              Copied to Clipboard
+            </ThemedText>
           </View>
         </Animated.View>
       )}
@@ -167,19 +173,19 @@ const Payment: React.FC = () => {
       {/* LOADING OVERLAY */}
       <LoadingOverlay visible={loadingVisible} label="Loading" dimOpacity={0.45} />
 
-      {/* ✅ SUCCESS POPUP (muncul setelah loading selesai) */}
+      {/* ✅ SUCCESS POPUP */}
       <SuccessPopup
         visible={popupVisible}
         onDismiss={() => setPopupVisible(false)}
         title="Hooray!"
-        message={"Payment has been accepted! We’re\npreparing your food now!"}
+        message={"Payment has been accepted!\nEnjoy your program!"}
         dimOpacity={0.55}
       />
     </ThemedView>
   );
 };
 
-export default Payment;
+export default ConsultationPayment;
 
 const styles = StyleSheet.create({
   container: { flex: 1 },

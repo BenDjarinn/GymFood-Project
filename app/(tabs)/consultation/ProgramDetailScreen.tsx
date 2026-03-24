@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { ConfirmationDialog } from "@shared/components/ui/ConfirmationDialog";
 import {
   View,
   ScrollView,
@@ -6,21 +7,33 @@ import {
   Pressable,
   TextInput,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 
 import ThemedView from "@shared/components/ui/ThemedView";
 import ThemedText from "@shared/components/ui/ThemedText";
 
-import DIET_OPTIONS from "@/data/dietPlan.json";
+import dietPlans from "@/data/dietPlan";
+import subscriptionPlans, { SubscriptionPlan } from "@/data/subscriptionPlan";
 
 export default function ProgramDetailScreen() {
+  const { planId } = useLocalSearchParams<{ planId: string }>();
+  const plan = (subscriptionPlans as SubscriptionPlan[]).find(
+    (p) => p.subscription_plan === planId
+  );
   const [healthConcern, setHealthConcern] = useState("");
   const [selectedDiet, setSelectedDiet] = useState<string | null>(
-    DIET_OPTIONS[0].label
+    dietPlans[0].label
   );
   const [foodAllergy, setFoodAllergy] = useState("");
   const [bodyGoals, setBodyGoals] = useState("");
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const isFormValid =
+    healthConcern.trim().length > 0 &&
+    foodAllergy.trim().length > 0 &&
+    bodyGoals.trim().length > 0;
+
 
   return (
     <ThemedView style={styles.container}>
@@ -57,7 +70,7 @@ export default function ProgramDetailScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.chipsRow}
         >
-          {DIET_OPTIONS.map((opt) => {
+          {dietPlans.map((opt) => {
             const active = selectedDiet === opt.label;
             return (
               <Pressable
@@ -103,7 +116,42 @@ export default function ProgramDetailScreen() {
           value={bodyGoals}
           onChangeText={setBodyGoals}
         />
+
+        {/* ── Checkout Button ── */}
+        <Pressable
+          onPress={() => {
+            if (!isFormValid) return;
+            setShowConfirm(true);
+          }}
+          disabled={!isFormValid}
+          style={({ pressed }) => [
+            styles.checkoutButton,
+            !isFormValid && styles.checkoutButtonDisabled,
+            pressed && isFormValid && { opacity: 0.85, transform: [{ scale: 0.97 }] },
+          ]}
+        >
+          <ThemedText style={styles.checkoutButtonText}>Checkout</ThemedText>
+          <MaterialIcons name="send" size={26} color="#fff" />
+        </Pressable>
       </ScrollView>
+
+      {/* ── Confirmation Dialog ── */}
+      <ConfirmationDialog
+        visible={showConfirm}
+        onDismiss={(result) => {
+          setShowConfirm(false);
+          if (result === "success" && plan) {
+            router.push({
+              pathname: "/(checkout)/ConsultationPaymentScreen",
+              params: {
+                planId: plan.subscription_plan,
+                planImage: plan.image,
+                planNotes: JSON.stringify(plan.important_notes),
+              },
+            });
+          }
+        }}
+      />
     </ThemedView>
   );
 }
@@ -189,6 +237,30 @@ const styles = StyleSheet.create({
   },
 
   chipLabelActive: {
+    fontFamily: "SF-Pro-DisplayBold",
+  },
+
+  /* ── Checkout Button ── */
+  checkoutButton: {
+    backgroundColor: "#4CAF50",
+    borderRadius: 14,
+    paddingVertical: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    marginTop: 30,
+    width: "70%",
+    alignSelf: "center",
+  },
+
+  checkoutButtonDisabled: {
+    backgroundColor: "#A8D5AB",
+  },
+
+  checkoutButtonText: {
+    color: "#fff",
+    fontSize: 18,
     fontFamily: "SF-Pro-DisplayBold",
   },
 });

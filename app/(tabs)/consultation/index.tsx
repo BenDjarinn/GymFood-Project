@@ -6,14 +6,8 @@ import ThemedView from "@shared/components/ui/ThemedView";
 import ThemedText from "@shared/components/ui/ThemedText";
 import SubscriptionCard from "@modules/consultation/components/SubscriptionCard";
 
-import subscriptionPlans from "@/data/subscriptionPlan.json";
+import subscriptionPlans, { SubscriptionPlan } from "@/data/subscriptionPlan";
 import { subscriptionPlanImages } from "@shared/constants/subscriptionPlanImages";
-
-interface SubscriptionPlan {
-  subscription_plan: string;
-  important_notes: string[];
-  image: string;
-}
 
 export default function ConsultationScreen() {
   return (

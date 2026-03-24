@@ -13,7 +13,7 @@ import OrderMap from "@modules/checkout/components/OrderMap";
 import { useCartStore } from "@modules/cart/store/useCartStore";
 import { buildCartItems } from "@modules/cart/utils/cartSelectors";
 
-import paymentMethods from "@/data/paymentMethod.json";
+import paymentMethods from "@/data/paymentMethod";
 import { paymentIcons } from "@shared/constants/paymentIcons";
 import { PaymentMethod } from "@shared/types/data";
 

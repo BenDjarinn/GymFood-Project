@@ -1,14 +1,19 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Animated, PanResponder, PanResponderGestureState } from "react-native";
 
 interface UseBottomSheetOptions {
   sheetHeight: number;
+  onClose?: () => void;
 }
 
-export const useBottomSheet = ({ sheetHeight }: UseBottomSheetOptions) => {
+export const useBottomSheet = ({ sheetHeight, onClose }: UseBottomSheetOptions) => {
   const [sheetVisible, setSheetVisible] = useState(false);
   const translateY = useRef(new Animated.Value(sheetHeight)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
+
+  // Store onClose in a ref so the panResponder always calls the latest version
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   const openSheet = () => {
     setSheetVisible(true);
@@ -38,7 +43,10 @@ export const useBottomSheet = ({ sheetHeight }: UseBottomSheetOptions) => {
         duration: 200,
         useNativeDriver: true,
       }),
-    ]).start(() => setSheetVisible(false));
+    ]).start(() => {
+      setSheetVisible(false);
+      onCloseRef.current?.();
+    });
   };
 
   const panResponder = useRef(
