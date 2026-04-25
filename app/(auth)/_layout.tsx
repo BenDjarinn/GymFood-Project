@@ -1,8 +1,17 @@
 import React from "react";
-import { Stack } from "expo-router";
+import { useAuth } from "@clerk/expo";
+import { Redirect, Stack } from "expo-router";
 import { StatusBar } from "react-native";
 
 export default function AuthLayout() {
+  const { isSignedIn, isLoaded } = useAuth();
+
+  if (!isLoaded) return null;
+
+  if (isSignedIn) {
+    return <Redirect href="/(tabs)/home" />;
+  }
+
   return (
     <>
       <StatusBar />

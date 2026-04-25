@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   StyleSheet,
   Text,
@@ -9,6 +9,7 @@ import {
   Platform,
   ScrollView,
   Image,
+  ActivityIndicator,
 } from "react-native";
 import { useRouter, Link } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -19,9 +20,20 @@ import {
   registerSchema,
   type RegisterFormData,
 } from "@shared/utils/authSchemas";
+import { useSignUp, useAuth } from "@clerk/expo";
+import { type Href } from "expo-router";
 
 const RegisterScreen: React.FC = () => {
   const router = useRouter();
+  const { signUp, errors: clerkErrors, fetchStatus } = useSignUp();
+  const { isSignedIn } = useAuth();
+  const [clerkError, setClerkError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingVerification, setPendingVerification] = useState(false);
+  const [verificationCode, setVerificationCode] = useState("");
+  const [verificationError, setVerificationError] = useState<string | null>(
+    null
+  );
 
   const {
     control,
@@ -39,14 +51,204 @@ const RegisterScreen: React.FC = () => {
     mode: "onBlur",
   });
 
-  const onSubmit = (data: RegisterFormData) => {
-    console.log("Register submitted", data);
+  const onSubmit = async (data: RegisterFormData) => {
+    if (!signUp) return;
+
+    setClerkError(null);
+    setIsSubmitting(true);
+
+    try {
+      const { error } = await signUp.password({
+        emailAddress: data.email,
+        password: data.password,
+        firstName: data.name.split(" ")[0],
+        lastName: data.name.split(" ").slice(1).join(" ") || undefined,
+      });
+
+      if (error) {
+        setClerkError(error.message || "Sign-up failed. Please try again.");
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Send email verification code
+      await signUp.verifications.sendEmailCode();
+
+      setPendingVerification(true);
+    } catch (err: any) {
+      const message =
+        err?.errors?.[0]?.longMessage ||
+        err?.errors?.[0]?.message ||
+        "Sign-up failed. Please try again.";
+      setClerkError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleVerify = async () => {
+    if (!signUp) return;
+
+    setVerificationError(null);
+    setIsSubmitting(true);
+
+    try {
+      await signUp.verifications.verifyEmailCode({
+        code: verificationCode,
+      });
+
+      if (signUp.status === "complete") {
+        await signUp.finalize({
+          navigate: ({ session, decorateUrl }) => {
+            if (session?.currentTask) {
+              console.log(session?.currentTask);
+              return;
+            }
+            router.replace("/(tabs)/home" as Href);
+          },
+        });
+      } else {
+        console.log("Verification status:", signUp.status);
+        setVerificationError(
+          "Verification incomplete. Please try again."
+        );
+      }
+    } catch (err: any) {
+      const message =
+        err?.errors?.[0]?.longMessage ||
+        err?.errors?.[0]?.message ||
+        "Verification failed. Please try again.";
+      setVerificationError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleResendCode = async () => {
+    if (!signUp) return;
+
+    try {
+      await signUp.verifications.sendEmailCode();
+      setVerificationError(null);
+    } catch (err: any) {
+      const message =
+        err?.errors?.[0]?.longMessage ||
+        err?.errors?.[0]?.message ||
+        "Failed to resend code. Please try again.";
+      setVerificationError(message);
+    }
   };
 
   const handleGoBack = () => {
+    if (pendingVerification) {
+      setPendingVerification(false);
+      setVerificationCode("");
+      setVerificationError(null);
+      return;
+    }
     router.push("/OnboardingScreen");
   };
 
+  // If signed in already, redirect
+  if (signUp?.status === "complete" || isSignedIn) {
+    return null;
+  }
+
+  const isBusy = isSubmitting || fetchStatus === "fetching";
+
+  // ── Verification Code Screen ──────────────────────────────
+  if (pendingVerification) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <KeyboardAvoidingView
+          style={styles.flex}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+        >
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Header */}
+            <View style={styles.header}>
+              <Pressable onPress={handleGoBack} style={styles.backButton}>
+                <MaterialIcons name="arrow-back" size={36} color="#34699A" />
+              </Pressable>
+              <Text style={styles.title}>Verify Email</Text>
+              <View style={styles.headerSpacer} />
+            </View>
+
+            <View style={styles.form}>
+              <Text style={styles.verifyDescription}>
+                We've sent a verification code to your email. Please enter it
+                below to complete your registration.
+              </Text>
+
+              {verificationError && (
+                <View style={styles.clerkErrorContainer}>
+                  <Text style={styles.clerkErrorText}>
+                    {verificationError}
+                  </Text>
+                </View>
+              )}
+
+              {clerkErrors?.fields?.code && (
+                <View style={styles.clerkErrorContainer}>
+                  <Text style={styles.clerkErrorText}>
+                    {clerkErrors.fields.code.message}
+                  </Text>
+                </View>
+              )}
+
+              <View style={styles.inputContainer}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Verification Code"
+                  placeholderTextColor="#A0AEC0"
+                  value={verificationCode}
+                  onChangeText={setVerificationCode}
+                  keyboardType="number-pad"
+                  autoFocus
+                  editable={!isBusy}
+                />
+              </View>
+
+              {/* Verify Button */}
+              <Pressable
+                onPress={handleVerify}
+                disabled={isBusy || !verificationCode}
+                style={({ pressed }) => [
+                  styles.registerButton,
+                  pressed && styles.registerButtonPressed,
+                  (isBusy || !verificationCode) && styles.buttonDisabled,
+                ]}
+              >
+                {isBusy ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.registerButtonText}>Verify Email</Text>
+                )}
+              </Pressable>
+
+              {/* Resend Code */}
+              <Pressable
+                onPress={handleResendCode}
+                disabled={isBusy}
+                style={styles.resendContainer}
+              >
+                <Text style={styles.resendText}>
+                  Didn't receive a code?{" "}
+                </Text>
+                <Text style={styles.resendLink}>Resend</Text>
+              </Pressable>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    );
+  }
+
+  // ── Registration Form Screen ──────────────────────────────
   return (
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
@@ -69,6 +271,13 @@ const RegisterScreen: React.FC = () => {
 
           {/* Form */}
           <View style={styles.form}>
+            {/* Clerk API Error */}
+            {clerkError && (
+              <View style={styles.clerkErrorContainer}>
+                <Text style={styles.clerkErrorText}>{clerkError}</Text>
+              </View>
+            )}
+
             {/* Name Input */}
             <View style={styles.inputContainer}>
               <Controller
@@ -86,6 +295,7 @@ const RegisterScreen: React.FC = () => {
                     onChangeText={onChange}
                     onBlur={onBlur}
                     autoCapitalize="words"
+                    editable={!isBusy}
                   />
                 )}
               />
@@ -111,6 +321,7 @@ const RegisterScreen: React.FC = () => {
                     onChangeText={onChange}
                     onBlur={onBlur}
                     keyboardType="phone-pad"
+                    editable={!isBusy}
                   />
                 )}
               />
@@ -140,6 +351,7 @@ const RegisterScreen: React.FC = () => {
                     keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}
+                    editable={!isBusy}
                   />
                 )}
               />
@@ -165,6 +377,7 @@ const RegisterScreen: React.FC = () => {
                     onChangeText={onChange}
                     onBlur={onBlur}
                     secureTextEntry
+                    editable={!isBusy}
                   />
                 )}
               />
@@ -192,6 +405,7 @@ const RegisterScreen: React.FC = () => {
                     onChangeText={onChange}
                     onBlur={onBlur}
                     secureTextEntry
+                    editable={!isBusy}
                   />
                 )}
               />
@@ -219,12 +433,18 @@ const RegisterScreen: React.FC = () => {
             {/* Register Button */}
             <Pressable
               onPress={handleSubmit(onSubmit)}
+              disabled={isBusy}
               style={({ pressed }) => [
                 styles.registerButton,
                 pressed && styles.registerButtonPressed,
+                isBusy && styles.buttonDisabled,
               ]}
             >
-              <Text style={styles.registerButtonText}>Register</Text>
+              {isBusy ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.registerButtonText}>Register</Text>
+              )}
             </Pressable>
 
             {/* Sign In Link */}
@@ -311,6 +531,48 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
 
+  // Clerk Error
+  clerkErrorContainer: {
+    backgroundColor: "#FFF5F5",
+    borderWidth: 1,
+    borderColor: "#E53E3E",
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+  },
+  clerkErrorText: {
+    color: "#E53E3E",
+    fontSize: 14,
+    fontFamily: "SF-Pro-DisplayRegular",
+    textAlign: "center",
+  },
+
+  // Verification
+  verifyDescription: {
+    fontSize: 16,
+    fontFamily: "SF-Pro-DisplayRegular",
+    color: "#34699A",
+    textAlign: "center",
+    marginBottom: 24,
+    lineHeight: 22,
+  },
+  resendContainer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 12,
+  },
+  resendText: {
+    fontSize: 16,
+    fontFamily: "SF-Pro-DisplayRegular",
+    color: "#58A0C8",
+  },
+  resendLink: {
+    fontSize: 16,
+    fontFamily: "SF-Pro-DisplayBold",
+    color: "#58A0C8",
+  },
+
   // Google Button
   googleButton: {
     flexDirection: "row",
@@ -360,6 +622,9 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     fontSize: 18,
     fontFamily: "SF-Pro-DisplayBold",
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
 
   // Sign In Link

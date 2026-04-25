@@ -29,7 +29,10 @@
     },
     "plugins": [
       "expo-router",
-      "expo-font"
+      "expo-font",
+      "expo-secure-store",
+      "expo-web-browser",
+      "@clerk/expo"
     ]
   }
 }

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   StyleSheet,
   Text,
@@ -9,6 +9,7 @@ import {
   Platform,
   ScrollView,
   Image,
+  ActivityIndicator,
 } from "react-native";
 import { useRouter, Link } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -16,9 +17,14 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { loginSchema, type LoginFormData } from "@shared/utils/authSchemas";
+import { useSignIn } from "@clerk/expo";
+import { type Href } from "expo-router";
 
 const LoginScreen: React.FC = () => {
   const router = useRouter();
+  const { signIn, errors: clerkErrors, fetchStatus } = useSignIn();
+  const [clerkError, setClerkError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const {
     control,
@@ -33,8 +39,47 @@ const LoginScreen: React.FC = () => {
     mode: "onBlur",
   });
 
-  const onSubmit = (data: LoginFormData) => {
-    console.log("Sign in submitted", data);
+  const onSubmit = async (data: LoginFormData) => {
+    if (!signIn) return;
+
+    setClerkError(null);
+    setIsSubmitting(true);
+
+    try {
+      const { error } = await signIn.password({
+        emailAddress: data.email,
+        password: data.password,
+      });
+
+      if (error) {
+        setClerkError(error.message || "Sign-in failed. Please try again.");
+        setIsSubmitting(false);
+        return;
+      }
+
+      if (signIn.status === "complete") {
+        await signIn.finalize({
+          navigate: ({ session, decorateUrl }) => {
+            if (session?.currentTask) {
+              console.log(session?.currentTask);
+              return;
+            }
+            router.replace("/(tabs)/home" as Href);
+          },
+        });
+      } else {
+        console.log("Sign-in status:", signIn.status);
+        setClerkError("Sign-in requires additional steps. Please try again.");
+      }
+    } catch (err: any) {
+      const message =
+        err?.errors?.[0]?.longMessage ||
+        err?.errors?.[0]?.message ||
+        "Sign-in failed. Please try again.";
+      setClerkError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleGoBack = () => {
@@ -42,6 +87,8 @@ const LoginScreen: React.FC = () => {
       router.back();
     }
   };
+
+  const isBusy = isSubmitting || fetchStatus === "fetching";
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -66,6 +113,13 @@ const LoginScreen: React.FC = () => {
 
           {/* Form */}
           <View style={styles.form}>
+            {/* Clerk API Error */}
+            {clerkError && (
+              <View style={styles.clerkErrorContainer}>
+                <Text style={styles.clerkErrorText}>{clerkError}</Text>
+              </View>
+            )}
+
             {/* Email Input */}
             <View style={styles.inputContainer}>
               <Controller
@@ -85,6 +139,7 @@ const LoginScreen: React.FC = () => {
                     keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}
+                    editable={!isBusy}
                   />
                 )}
               />
@@ -110,6 +165,7 @@ const LoginScreen: React.FC = () => {
                     onChangeText={onChange}
                     onBlur={onBlur}
                     secureTextEntry
+                    editable={!isBusy}
                   />
                 )}
               />
@@ -142,12 +198,18 @@ const LoginScreen: React.FC = () => {
             {/* Sign In Button */}
             <Pressable
               onPress={handleSubmit(onSubmit)}
+              disabled={isBusy}
               style={({ pressed }) => [
                 styles.signInButton,
                 pressed && styles.signInButtonPressed,
+                isBusy && styles.buttonDisabled,
               ]}
             >
-              <Text style={styles.signInButtonText}>Sign In</Text>
+              {isBusy ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.signInButtonText}>Sign In</Text>
+              )}
             </Pressable>
 
             {/* Sign Up Link */}
@@ -236,6 +298,22 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
 
+  // Clerk Error
+  clerkErrorContainer: {
+    backgroundColor: "#FFF5F5",
+    borderWidth: 1,
+    borderColor: "#E53E3E",
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+  },
+  clerkErrorText: {
+    color: "#E53E3E",
+    fontSize: 14,
+    fontFamily: "SF-Pro-DisplayRegular",
+    textAlign: "center",
+  },
+
   // Forget Password
   forgetPasswordContainer: {
     alignSelf: "flex-end",
@@ -297,6 +375,9 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     fontSize: 18,
     fontFamily: "SF-Pro-DisplayBold",
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
 
   // Sign Up
