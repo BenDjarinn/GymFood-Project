@@ -44,3 +44,23 @@ export const loginSchema = z.object({
 });
 
 export type LoginFormData = z.infer<typeof loginSchema>;
+
+// ─── Forgot Password (Email) ────────────────────────────────
+export const forgotPasswordEmailSchema = z.object({
+  email: z
+    .string()
+    .trim()
+    .min(1, "Email is required")
+    .email("Please enter a valid email address"),
+});
+
+export type ForgotPasswordEmailData = z.infer<typeof forgotPasswordEmailSchema>;
+
+// ─── Reset Password ─────────────────────────────────────────
+export const resetPasswordSchema = z.object({
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters"),
+});
+
+export type ResetPasswordData = z.infer<typeof resetPasswordSchema>;

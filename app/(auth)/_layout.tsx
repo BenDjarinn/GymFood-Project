@@ -19,6 +19,7 @@ export default function AuthLayout() {
         <Stack.Screen name="OnboardingScreen" />
         <Stack.Screen name="RegisterScreen" />
         <Stack.Screen name="LoginScreen" />
+        <Stack.Screen name="ForgotPasswordScreen" />
       </Stack>
     </>
   );

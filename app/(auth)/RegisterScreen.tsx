@@ -22,11 +22,13 @@ import {
 } from "@shared/utils/authSchemas";
 import { useSignUp, useAuth } from "@clerk/expo";
 import { type Href } from "expo-router";
+import { useGoogleOAuth } from "@shared/hooks/useGoogleOAuth";
 
 const RegisterScreen: React.FC = () => {
   const router = useRouter();
   const { signUp, errors: clerkErrors, fetchStatus } = useSignUp();
   const { isSignedIn } = useAuth();
+  const { handleGoogleSignIn, isLoading: isGoogleLoading } = useGoogleOAuth();
   const [clerkError, setClerkError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingVerification, setPendingVerification] = useState(false);
@@ -418,16 +420,25 @@ const RegisterScreen: React.FC = () => {
 
             {/* Continue with Google */}
             <Pressable
+              onPress={handleGoogleSignIn}
+              disabled={isBusy || isGoogleLoading}
               style={({ pressed }) => [
                 styles.googleButton,
                 pressed && styles.googleButtonPressed,
+                isGoogleLoading && styles.buttonDisabled,
               ]}
             >
-              <Image
-                source={require("@/assets/img/google-logo.png")}
-                style={styles.googleIcon}
-              />
-              <Text style={styles.googleButtonText}>Continue with Google</Text>
+              {isGoogleLoading ? (
+                <ActivityIndicator color="#2B5079" />
+              ) : (
+                <>
+                  <Image
+                    source={require("@/assets/img/google-logo.png")}
+                    style={styles.googleIcon}
+                  />
+                  <Text style={styles.googleButtonText}>Continue with Google</Text>
+                </>
+              )}
             </Pressable>
 
             {/* Register Button */}
