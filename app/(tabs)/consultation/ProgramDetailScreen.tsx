@@ -14,10 +14,12 @@ import ThemedView from "@shared/components/ui/ThemedView";
 import ThemedText from "@shared/components/ui/ThemedText";
 
 import dietPlans from "@/data/dietPlan";
-import subscriptionPlans, { SubscriptionPlan } from "@/data/subscriptionPlan";
+import { useSupabaseSubscriptionPlans } from "@shared/hooks/useSupabaseSubscriptionPlans";
+import { SubscriptionPlan } from "@/data/subscriptionPlan";
 
 export default function ProgramDetailScreen() {
   const { planId } = useLocalSearchParams<{ planId: string }>();
+  const { plans: subscriptionPlans } = useSupabaseSubscriptionPlans();
   const plan = (subscriptionPlans as SubscriptionPlan[]).find(
     (p) => p.subscription_plan === planId
   );

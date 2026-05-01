@@ -50,6 +50,7 @@ const ConsultationPayment: React.FC = () => {
 
   const loadingDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingDoneRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentOrderRef = useRef<CompletedConsultationOrder | null>(null);
 
   const clearAllTimers = () => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -111,10 +112,14 @@ const ConsultationPayment: React.FC = () => {
               planImage,
               planNotes,
               paidAt: new Date().toISOString(),
+              status: "active",
             };
             useConsultationHistoryStore.getState().addOrder(order);
 
             setPopupVisible(true);
+
+            // Store the order ID for navigation after popup dismiss
+            currentOrderRef.current = order;
           }, 2500);
         }, 700);
       });
@@ -176,7 +181,19 @@ const ConsultationPayment: React.FC = () => {
       {/* ✅ SUCCESS POPUP */}
       <SuccessPopup
         visible={popupVisible}
-        onDismiss={() => setPopupVisible(false)}
+        onDismiss={() => {
+          setPopupVisible(false);
+          // Navigate to chat screen with the active session
+          if (currentOrderRef.current) {
+            router.replace({
+              pathname: "/(tabs)/consultation/ChatScreen",
+              params: {
+                orderId: currentOrderRef.current.id,
+                planName: currentOrderRef.current.planName,
+              },
+            });
+          }
+        }}
         title="Hooray!"
         message={"Payment has been accepted!\nEnjoy your program!"}
         dimOpacity={0.55}

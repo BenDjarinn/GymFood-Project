@@ -1,4 +1,3 @@
-import meals from "@/data/meals";
 import { Meal, CartById } from "@shared/types/data";
 
 interface CartItem {
@@ -6,7 +5,11 @@ interface CartItem {
   qty: number;
 }
 
-export const buildCartItems = (cartById: CartById): CartItem[] => {
+/**
+ * Build cart item list by resolving meal IDs against the provided meals array.
+ * `meals` should come from the useSupabaseMeals hook (or fallback data).
+ */
+export const buildCartItems = (cartById: CartById, meals: Meal[]): CartItem[] => {
   return Object.entries(cartById)
     .map(([mealId, qty]) => ({
       meal: meals.find((m) => m.id === mealId),

@@ -16,6 +16,7 @@ import { useCartStore } from "@modules/cart/store/useCartStore";
 import { useOrderHistoryStore } from "@modules/cart/store/useOrderHistoryStore";
 import { buildCartItems } from "@modules/cart/utils/cartSelectors";
 import { CompletedOrder } from "@shared/types/data";
+import fallbackMeals from "@/data/meals";
 
 const Payment: React.FC = () => {
   const data = bankAccounts as BankAccountData[];
@@ -93,7 +94,7 @@ const Payment: React.FC = () => {
 
             // ✅ Save order to history before showing popup
             const cartById = useCartStore.getState().cartById;
-            const items = buildCartItems(cartById).filter(
+            const items = buildCartItems(cartById, fallbackMeals).filter(
               (it): it is { meal: NonNullable<typeof it.meal>; qty: number } => !!it.meal
             );
             const totalAmount = items.reduce(

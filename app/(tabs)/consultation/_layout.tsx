@@ -19,6 +19,12 @@ export default function ConsultationLayout() {
           headerShown: false,
         }}
       />
+      <Stack.Screen
+        name="ChatScreen"
+        options={{
+          headerShown: false,
+        }}
+      />
     </Stack>
     </>
     

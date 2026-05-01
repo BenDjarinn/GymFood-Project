@@ -62,9 +62,13 @@ export interface CompletedConsultationOrder {
   planImage: string;      // key for subscriptionPlanImages, e.g. "beginner.png"
   planNotes: string[];    // the bullet-point notes
   paidAt: string;         // ISO timestamp
+  status: "active" | "done"; // tracks session lifecycle
 }
 
 export interface ConsultationHistoryState {
   orders: CompletedConsultationOrder[];
   addOrder: (order: CompletedConsultationOrder) => void;
+  endSession: (orderId: string) => Promise<void>;
+  getActiveSession: () => CompletedConsultationOrder | undefined;
+  hasActiveSession: () => boolean;
 }

@@ -6,12 +6,12 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import ThemedView from "@shared/components/ui/ThemedView";
 import ForumPost from "@modules/consultation/components/ForumPost";
 
-import forumPosts, { ForumPostData } from "@/data/forumPosts";
+import { useSupabaseForum } from "@shared/hooks/useSupabaseForum";
 
 export default function ForumScreen() {
   const [searchText, setSearchText] = useState("");
 
-  const posts = forumPosts as ForumPostData[];
+  const { posts } = useSupabaseForum();
 
   return (
     <ThemedView style={styles.container}>

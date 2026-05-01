@@ -12,6 +12,7 @@ import OrderMap from "@modules/checkout/components/OrderMap";
 
 import { useCartStore } from "@modules/cart/store/useCartStore";
 import { buildCartItems } from "@modules/cart/utils/cartSelectors";
+import { useSupabaseMeals } from "@shared/hooks/useSupabaseMeals";
 
 import paymentMethods from "@/data/paymentMethod";
 import { paymentIcons } from "@shared/constants/paymentIcons";
@@ -33,7 +34,8 @@ const formatRupiah = (n: number): string =>
 
 const OrderDetails: React.FC = () => {
   const cartById = useCartStore((s) => s.cartById);
-  const cartItems = buildCartItems(cartById);
+  const { meals } = useSupabaseMeals();
+  const cartItems = buildCartItems(cartById, meals);
 
   const [lat, setLat] = useState(-6.2);
   const [lng, setLng] = useState(106.8);

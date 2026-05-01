@@ -90,7 +90,21 @@ export default function HistoryScreen() {
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: 40 }}
               renderItem={({ item }) => (
-                <ConsultationHistoryCard order={item} />
+                <ConsultationHistoryCard
+                  order={item}
+                  onPress={
+                    item.status === "active"
+                      ? () =>
+                          router.push({
+                            pathname: "/(tabs)/consultation/ChatScreen",
+                            params: {
+                              orderId: item.id,
+                              planName: item.planName,
+                            },
+                          })
+                      : undefined
+                  }
+                />
               )}
             />
           )}

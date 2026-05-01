@@ -7,6 +7,7 @@ interface SubscriptionCardProps {
   notes: string[];
   image: ImageSourcePropType;
   onPress?: () => void;
+  disabled?: boolean;
 }
 
 const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
@@ -14,13 +15,14 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
   notes,
   image,
   onPress,
+  disabled = false,
 }) => {
   return (
     <Pressable
-      onPress={onPress}
+      onPress={disabled ? undefined : onPress}
       style={({ pressed }) => [
         styles.card,
-        { opacity: pressed ? 0.85 : 1 },
+        { opacity: disabled ? 0.5 : pressed ? 0.85 : 1 },
       ]}
     >
       {/* IMAGE */}

@@ -1,27 +1,49 @@
 import React from "react";
-import { View, Image, StyleSheet, ImageSourcePropType } from "react-native";
+import { View, Image, StyleSheet, ImageSourcePropType, Pressable } from "react-native";
 import ThemedText from "@shared/components/ui/ThemedText";
 import { CompletedConsultationOrder } from "@shared/types/data";
 import { subscriptionPlanImages } from "@shared/constants/subscriptionPlanImages";
 
 interface ConsultationHistoryCardProps {
   order: CompletedConsultationOrder;
+  onPress?: () => void;
 }
 
 const ConsultationHistoryCard: React.FC<ConsultationHistoryCardProps> = ({
   order,
+  onPress,
 }) => {
   const imageSource: ImageSourcePropType | undefined =
     subscriptionPlanImages[order.planImage];
 
+  const isActive = order.status === "active";
+
   return (
-    <View style={styles.card}>
+    <Pressable
+      style={({ pressed }) => [
+        styles.card,
+        pressed && onPress ? { opacity: 0.85 } : {},
+      ]}
+      onPress={onPress}
+    >
       {/* Left image */}
       {imageSource && <Image source={imageSource} style={styles.image} />}
 
       {/* Right info */}
       <View style={styles.infoContainer}>
-        <ThemedText style={styles.title}>{order.planName}</ThemedText>
+        <View style={styles.titleRow}>
+          <ThemedText style={styles.title}>{order.planName}</ThemedText>
+          <View
+            style={[
+              styles.statusBadge,
+              isActive ? styles.statusActive : styles.statusDone,
+            ]}
+          >
+            <ThemedText style={styles.statusText}>
+              {isActive ? "Active" : "Done"}
+            </ThemedText>
+          </View>
+        </View>
 
         <View style={styles.notesList}>
           {order.planNotes.map((note, index) => (
@@ -32,7 +54,7 @@ const ConsultationHistoryCard: React.FC<ConsultationHistoryCardProps> = ({
           ))}
         </View>
       </View>
-    </View>
+    </Pressable>
   );
 };
 
@@ -66,12 +88,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
 
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+
   title: {
     fontSize: 20,
     fontFamily: "SF-Pro-DisplayBold",
     color: "#34699A",
     fontStyle: "italic",
-    marginBottom: 12,
+  },
+
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  statusActive: {
+    backgroundColor: "#4CAF50",
+  },
+  statusDone: {
+    backgroundColor: "#A0BDD4",
+  },
+  statusText: {
+    fontSize: 11,
+    fontFamily: "SF-Pro-DisplayBold",
+    color: "#FFFFFF",
   },
 
   notesList: {

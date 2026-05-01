@@ -9,7 +9,7 @@ import CategoryList from "@modules/meals/components/CategoryList";
 import MealGrid from "@modules/meals/components/MealGrid";
 import OrderBottomSheet from "@modules/meals/components/OrderBottomSheet";
 
-import meals from "@/data/meals";
+import { useSupabaseMeals } from "@shared/hooks/useSupabaseMeals";
 import { useAppFonts } from "@/assets/fonts";
 
 import { useCartStore } from "@modules/cart/store/useCartStore";
@@ -26,6 +26,8 @@ const Home: React.FC = () => {
 
   const [activeId, setActiveId] = useState<string>("meat");
   const [selectedMealId, setSelectedMealId] = useState<string | null>(null);
+
+  const { meals } = useSupabaseMeals();
 
   const cartById = useCartStore((s) => s.cartById);
   const addToCart = useCartStore((s) => s.addToCart);
@@ -54,14 +56,14 @@ const Home: React.FC = () => {
   // ── Derived data ────────────────────────────────────────
   const categoryMeals = useMemo(
     () => (meals as Meal[]).filter((m) => m.categoryId === activeId),
-    [activeId]
+    [activeId, meals]
   );
 
   const mealById = useMemo(() => {
     const map: Record<string, Meal> = {};
     for (const m of meals as Meal[]) map[m.id] = m;
     return map;
-  }, []);
+  }, [meals]);
 
   const cartKindsCount = useMemo(
     () => Object.values(cartById).filter((q) => (q ?? 0) > 0).length,

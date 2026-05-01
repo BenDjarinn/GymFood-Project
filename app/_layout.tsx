@@ -1,10 +1,12 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useColorScheme } from "react-native";
 import { Colors } from "@shared/constants/Colors";
 import { ClerkProvider } from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
+import { hydrateOrderHistory } from "@modules/cart/store/useOrderHistoryStore";
+import { hydrateConsultationHistory } from "@modules/consultation/store/useConsultationHistoryStore";
 
 const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
 
@@ -17,6 +19,12 @@ if (!publishableKey) {
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? "light"] ?? Colors.light;
+
+  // Hydrate order history stores from Supabase on app start
+  useEffect(() => {
+    hydrateOrderHistory();
+    hydrateConsultationHistory();
+  }, []);
 
   return (
     <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>

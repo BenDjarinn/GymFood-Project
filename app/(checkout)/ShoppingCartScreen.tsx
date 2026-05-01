@@ -9,10 +9,12 @@ import OrderItemCard from "@modules/checkout/components/OrderItemCard";
 
 import { useCartStore } from "@modules/cart/store/useCartStore";
 import { buildCartItems } from "@modules/cart/utils/cartSelectors";
+import { useSupabaseMeals } from "@shared/hooks/useSupabaseMeals";
 
 const ShoppingCartScreen: React.FC = () => {
   const cartById = useCartStore((s) => s.cartById);
-  const cartItems = buildCartItems(cartById);
+  const { meals } = useSupabaseMeals();
+  const cartItems = buildCartItems(cartById, meals);
   
   return (
     <ThemedView style={styles.container}>
