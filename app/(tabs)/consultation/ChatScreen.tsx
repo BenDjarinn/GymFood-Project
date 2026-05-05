@@ -1,12 +1,15 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import {
   View,
-  ScrollView,
+  FlatList,
   StyleSheet,
   TextInput,
   Pressable,
   Image,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
@@ -14,21 +17,17 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import ThemedView from "@shared/components/ui/ThemedView";
 import ThemedText from "@shared/components/ui/ThemedText";
 import { useConsultationHistoryStore } from "@modules/consultation/store/useConsultationHistoryStore";
+import { useFitnessChat } from "@modules/consultation/hooks/useFitnessChat";
+import type { ChatMessageItem } from "@shared/types/chat";
 
 // Coach profile data
 const COACH = {
-  name: "Sander",
+  name: "Coach Jim",
   avatar:
-    "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&crop=face",
+    "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=150&h=150&fit=crop",
 };
 
-// Welcome messages from the coach (static for Phase 1)
-const WELCOME_MESSAGES = [
-  "Hey, there",
-  "You may consultate here",
-  "Feel free to message me anytime. Dont call me yet",
-];
-
+// ── Chat Bubble Component ─────────────────────────────────────
 interface ChatBubbleProps {
   text: string;
   isCoach: boolean;
@@ -69,6 +68,21 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
   </View>
 );
 
+// ── Typing Indicator Component ────────────────────────────────
+const TypingIndicator: React.FC = () => (
+  <View style={[styles.bubbleRow, styles.bubbleRowLeft]}>
+    <Image source={{ uri: COACH.avatar }} style={styles.bubbleAvatar} />
+    <View style={[styles.bubble, styles.coachBubble, styles.typingBubble]}>
+      <View style={styles.typingDots}>
+        <View style={[styles.dot, styles.dot1]} />
+        <View style={[styles.dot, styles.dot2]} />
+        <View style={[styles.dot, styles.dot3]} />
+      </View>
+    </View>
+  </View>
+);
+
+// ── Main ChatScreen ───────────────────────────────────────────
 export default function ChatScreen() {
   const { orderId, planName } = useLocalSearchParams<{
     orderId: string;
@@ -77,7 +91,26 @@ export default function ChatScreen() {
 
   const endSession = useConsultationHistoryStore((s) => s.endSession);
   const [messageText, setMessageText] = useState("");
+  const flatListRef = useRef<FlatList>(null);
 
+  // ── Custom hook: all chat logic extracted here ──────────
+  const {
+    messages,
+    isLoading,
+    isCoachTyping,
+    error,
+    sendMessage,
+    clientReady,
+  } = useFitnessChat(orderId);
+
+  // ── Send handler ────────────────────────────────────────
+  const handleSend = useCallback(() => {
+    if (!messageText.trim()) return;
+    sendMessage(messageText);
+    setMessageText("");
+  }, [messageText, sendMessage]);
+
+  // ── End session handler ─────────────────────────────────
   const handleEndSession = () => {
     Alert.alert(
       "End Session",
@@ -91,12 +124,30 @@ export default function ChatScreen() {
             if (orderId) {
               await endSession(orderId);
             }
-            router.back();
+            router.replace("/(tabs)/consultation");
           },
         },
       ]
     );
   };
+
+  // ── Render a single message ─────────────────────────────
+  const renderMessage = useCallback(
+    ({ item, index }: { item: ChatMessageItem; index: number }) => {
+      // Show avatar on first coach message or after a user message
+      const prevMsg = index > 0 ? messages[index - 1] : null;
+      const showAvatar = item.isCoach && (!prevMsg || !prevMsg.isCoach);
+
+      return (
+        <ChatBubble
+          text={item.text}
+          isCoach={item.isCoach}
+          showAvatar={showAvatar}
+        />
+      );
+    },
+    [messages]
+  );
 
   return (
     <ThemedView style={styles.container}>
@@ -117,17 +168,38 @@ export default function ChatScreen() {
 
         <View style={styles.coachInfo}>
           <ThemedText style={styles.coachName}>{COACH.name}</ThemedText>
-          <ThemedText style={styles.coachOnline}>Online</ThemedText>
+          <ThemedText style={styles.coachOnline}>
+            {isCoachTyping ? "Typing..." : "Online"}
+          </ThemedText>
         </View>
 
         <View style={styles.headerIcons}>
-          <Pressable hitSlop={8}>
+          <Pressable
+            hitSlop={8}
+            style={({ pressed }) => [
+              styles.iconBtn,
+              pressed && styles.iconBtnPressed,
+            ]}
+          >
             <MaterialIcons name="phone" size={24} color="#34699A" />
           </Pressable>
-          <Pressable hitSlop={8}>
+          <Pressable
+            hitSlop={8}
+            style={({ pressed }) => [
+              styles.iconBtn,
+              pressed && styles.iconBtnPressed,
+            ]}
+          >
             <MaterialIcons name="videocam" size={24} color="#34699A" />
           </Pressable>
-          <Pressable onPress={handleEndSession} hitSlop={8}>
+          <Pressable
+            onPress={handleEndSession}
+            hitSlop={8}
+            style={({ pressed }) => [
+              styles.iconBtn,
+              pressed && styles.iconBtnEndPressed,
+            ]}
+          >
             <MaterialIcons name="logout" size={22} color="#CC475A" />
           </Pressable>
         </View>
@@ -136,54 +208,118 @@ export default function ChatScreen() {
       {/* ── SEPARATOR ─────────────────────────────────── */}
       <View style={styles.separator} />
 
-      {/* ── CHAT AREA ─────────────────────────────────── */}
-      <ScrollView
+      {/* ── CHAT AREA with KeyboardAvoidingView ────────── */}
+      <KeyboardAvoidingView
         style={styles.chatArea}
-        contentContainerStyle={styles.chatContent}
-        showsVerticalScrollIndicator={false}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={0}
       >
-        {/* Day label */}
-        <ThemedText style={styles.dayLabel}>Today</ThemedText>
+        {/* Loading state */}
+        {isLoading && (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#34699A" />
+            <ThemedText style={styles.loadingText}>
+              Connecting to Coach Jim...
+            </ThemedText>
+          </View>
+        )}
 
-        {/* Welcome messages from coach */}
-        {WELCOME_MESSAGES.map((msg, i) => (
-          <ChatBubble
-            key={`coach-${i}`}
-            text={msg}
-            isCoach
-            showAvatar={i === 0}
-          />
-        ))}
-      </ScrollView>
+        {/* Error state */}
+        {error && !isLoading && (
+          <View style={styles.errorContainer}>
+            <MaterialIcons name="error-outline" size={36} color="#CC475A" />
+            <ThemedText style={styles.errorText}>{error}</ThemedText>
+          </View>
+        )}
 
-      {/* ── INPUT BAR ─────────────────────────────────── */}
-      <View style={styles.inputBar}>
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Type a message..."
-            placeholderTextColor="#A0BDD4"
-            value={messageText}
-            onChangeText={setMessageText}
-            multiline
+        {/* Message list — FlatList for performance */}
+        {clientReady && (
+          <FlatList
+            ref={flatListRef}
+            data={messages}
+            renderItem={renderMessage}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.chatContent}
+            showsVerticalScrollIndicator={false}
+            // Auto-scroll to newest message
+            onContentSizeChange={() =>
+              flatListRef.current?.scrollToEnd({ animated: true })
+            }
+            onLayout={() =>
+              flatListRef.current?.scrollToEnd({ animated: false })
+            }
+            // Performance optimizations
+            maxToRenderPerBatch={15}
+            windowSize={10}
+            removeClippedSubviews={Platform.OS === "android"}
+            // Day label as header
+            ListHeaderComponent={
+              <ThemedText style={styles.dayLabel}>Today</ThemedText>
+            }
+            // Typing indicator as footer
+            ListFooterComponent={isCoachTyping ? <TypingIndicator /> : null}
           />
-          <View style={styles.inputIcons}>
-            <Pressable hitSlop={6}>
-              <MaterialIcons name="mic" size={24} color="#34699A" />
-            </Pressable>
-            <Pressable hitSlop={6}>
-              <MaterialIcons name="attach-file" size={24} color="#34699A" />
-            </Pressable>
-            <Pressable hitSlop={6}>
-              <MaterialIcons name="send" size={24} color="#34699A" />
-            </Pressable>
+        )}
+
+        {/* ── INPUT BAR ─────────────────────────────────── */}
+        <View style={styles.inputBar}>
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={styles.textInput}
+              placeholder="Type a message..."
+              placeholderTextColor="#A0BDD4"
+              value={messageText}
+              onChangeText={setMessageText}
+              multiline
+              editable={clientReady}
+              onSubmitEditing={handleSend}
+              returnKeyType="send"
+            />
+            <View style={styles.inputIcons}>
+              <Pressable
+                hitSlop={6}
+                style={({ pressed }) => [
+                  styles.inputIconBtn,
+                  pressed && styles.inputIconBtnPressed,
+                ]}
+              >
+                <MaterialIcons name="mic" size={24} color="#34699A" />
+              </Pressable>
+              <Pressable
+                hitSlop={6}
+                style={({ pressed }) => [
+                  styles.inputIconBtn,
+                  pressed && styles.inputIconBtnPressed,
+                ]}
+              >
+                <MaterialIcons name="attach-file" size={24} color="#34699A" />
+              </Pressable>
+              <Pressable
+                onPress={handleSend}
+                disabled={!messageText.trim() || !clientReady}
+                hitSlop={6}
+                style={({ pressed }) => [
+                  styles.inputIconBtn,
+                  styles.sendBtn,
+                  (!messageText.trim() || !clientReady) &&
+                    styles.sendBtnDisabled,
+                  pressed &&
+                    messageText.trim() &&
+                    clientReady &&
+                    styles.sendBtnPressed,
+                ]}
+              >
+                <MaterialIcons name="send" size={22} color="#FFFFFF" />
+              </Pressable>
+            </View>
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </ThemedView>
   );
 }
 
+// ── Styles ──────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -191,9 +327,9 @@ const styles = StyleSheet.create({
 
   /* ── Title Bar ── */
   titleBar: {
-    paddingTop: 60,
+    paddingTop: 80,
     paddingHorizontal: 20,
-    paddingBottom: 8,
+    paddingBottom: 25,
   },
   titleText: {
     fontSize: 20,
@@ -252,6 +388,32 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
 
+  /* ── Loading / Error ── */
+  loadingContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: "#A0BDD4",
+    fontFamily: "SF-Pro-DisplayRegular",
+  },
+  errorContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 32,
+  },
+  errorText: {
+    fontSize: 14,
+    color: "#CC475A",
+    fontFamily: "SF-Pro-DisplayRegular",
+    textAlign: "center",
+  },
+
   /* ── Day Label ── */
   dayLabel: {
     textAlign: "center",
@@ -276,13 +438,13 @@ const styles = StyleSheet.create({
 
   /* ── Avatar in Bubble ── */
   bubbleAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     marginRight: 8,
   },
   bubbleAvatarSpacer: {
-    width: 36,
+    width: 40,
     marginRight: 8,
   },
 
@@ -313,6 +475,26 @@ const styles = StyleSheet.create({
     color: "#34699A",
   },
 
+  /* ── Typing Indicator ── */
+  typingBubble: {
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+  },
+  typingDots: {
+    flexDirection: "row",
+    gap: 5,
+    alignItems: "center",
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "rgba(255, 255, 255, 0.6)",
+  },
+  dot1: { opacity: 0.4 },
+  dot2: { opacity: 0.7 },
+  dot3: { opacity: 1.0 },
+
   /* ── Input Bar ── */
   inputBar: {
     paddingHorizontal: 16,
@@ -339,7 +521,51 @@ const styles = StyleSheet.create({
   inputIcons: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: 8,
     marginLeft: 8,
+  },
+
+  /* ── Icon Button (header) ── */
+  iconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
+  iconBtnPressed: {
+    backgroundColor: "rgba(52, 105, 154, 0.12)",
+    transform: [{ scale: 0.88 }],
+  },
+  iconBtnEndPressed: {
+    backgroundColor: "rgba(204, 71, 90, 0.10)",
+    transform: [{ scale: 0.88 }],
+  },
+
+  /* ── Icon Button (input bar) ── */
+  inputIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
+  inputIconBtnPressed: {
+    backgroundColor: "rgba(52, 105, 154, 0.12)",
+    transform: [{ scale: 0.85 }],
+  },
+
+  /* ── Send Button ── */
+  sendBtn: {
+    backgroundColor: "#34699A",
+  },
+  sendBtnDisabled: {
+    backgroundColor: "#A0BDD4",
+  },
+  sendBtnPressed: {
+    backgroundColor: "#2A5580",
+    transform: [{ scale: 0.85 }],
   },
 });

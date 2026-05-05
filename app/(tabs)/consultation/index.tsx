@@ -14,9 +14,11 @@ import { useConsultationHistoryStore } from "@modules/consultation/store/useCons
 
 export default function ConsultationScreen() {
   const { plans: subscriptionPlans } = useSupabaseSubscriptionPlans();
-  const hasActive = useConsultationHistoryStore((s) => s.hasActiveSession());
+  const hasActive = useConsultationHistoryStore((s) =>
+    s.orders.some((o) => o.status === "active")
+  );
   const activeSession = useConsultationHistoryStore((s) =>
-    s.getActiveSession()
+    s.orders.find((o) => o.status === "active")
   );
 
   return (
