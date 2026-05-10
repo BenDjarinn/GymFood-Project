@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useUser } from "@clerk/expo";
+import { useUser, useAuth } from "@clerk/expo";
 import { chatClient } from "@shared/utils/streamChat";
 import { COACH_JIM_ID } from "@shared/types/chat";
 import type { Channel as StreamChannel, Event } from "stream-chat";
 import type { ChatMessageItem } from "@shared/types/chat";
+import type { ConsultationIntake } from "@shared/types/data";
 
 const TOKEN_URL = process.env.EXPO_PUBLIC_STREAM_TOKEN_URL!;
 
@@ -17,8 +18,9 @@ const TYPING_TIMEOUT = 45_000;
  *
  * Architecture: separates UI ↔ state ↔ transport concerns.
  */
-export function useFitnessChat(orderId: string) {
+export function useFitnessChat(orderId: string, intake?: ConsultationIntake) {
   const { user } = useUser();
+  const { getToken } = useAuth();
 
   const [messages, setMessages] = useState<ChatMessageItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -28,6 +30,12 @@ export function useFitnessChat(orderId: string) {
 
   const channelRef = useRef<StreamChannel | null>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Hold the latest intake in a ref so it's read on connect without re-firing
+  // the effect when the prop reference changes.
+  const intakeRef = useRef<ConsultationIntake | undefined>(intake);
+  useEffect(() => {
+    intakeRef.current = intake;
+  }, [intake]);
 
   // ── Connect to GetStream & watch channel ────────────────────
   useEffect(() => {
@@ -43,18 +51,32 @@ export function useFitnessChat(orderId: string) {
         setIsLoading(true);
         setError(null);
 
-        // 1. Fetch token from backend Edge Function
+        // 1. Fetch token from backend Edge Function. The Clerk session JWT
+        // proves caller identity; the function verifies it server-side via
+        // Clerk's JWKS and confirms orderId belongs to this user.
+        const clerkToken = await getToken();
+        if (!clerkToken) throw new Error("Not signed in");
+
         const tokenRes = await fetch(TOKEN_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${clerkToken}`,
+          },
           body: JSON.stringify({
             userId,
             userName: user.firstName ?? "User",
             orderId,
+            intake: intakeRef.current,
           }),
         });
 
-        if (!tokenRes.ok) throw new Error("Failed to get chat token");
+        if (!tokenRes.ok) {
+          const errBody = await tokenRes.text().catch(() => "");
+          throw new Error(
+            `Failed to get chat token (${tokenRes.status})${errBody ? `: ${errBody}` : ""}`
+          );
+        }
 
         const { token, channelId } = await tokenRes.json();
 

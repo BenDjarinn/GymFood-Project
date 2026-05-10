@@ -17,7 +17,6 @@
     "isolatedModules": true,
     "allowJs": true,
     "forceConsistentCasingInFileNames": true,
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
       "@modules/*": ["./src/modules/*"],

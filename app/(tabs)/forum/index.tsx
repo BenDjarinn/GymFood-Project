@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import { View, ScrollView, StyleSheet, TextInput, Pressable } from "react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 
 import ThemedView from "@shared/components/ui/ThemedView";
@@ -11,7 +11,14 @@ import { useSupabaseForum } from "@shared/hooks/useSupabaseForum";
 export default function ForumScreen() {
   const [searchText, setSearchText] = useState("");
 
-  const { posts } = useSupabaseForum();
+  const { posts, refetch } = useSupabaseForum();
+
+  // Re-fetch every time the tab regains focus so newly-created posts appear.
+  useFocusEffect(
+    useCallback(() => {
+      refetch();
+    }, [refetch])
+  );
 
   return (
     <ThemedView style={styles.container}>

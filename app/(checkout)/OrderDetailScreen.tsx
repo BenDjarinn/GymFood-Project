@@ -20,7 +20,10 @@ import { PaymentMethod } from "@shared/types/data";
 
 import Geocoder from "react-native-geocoding";
 
-Geocoder.init("YOUR_GOOGLE_API_KEY");
+const GEOCODING_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY ?? "";
+if (GEOCODING_API_KEY) {
+  Geocoder.init(GEOCODING_API_KEY);
+}
 
 const TAX = 2000;
 const HEALTH_INSURANCE = 8000;

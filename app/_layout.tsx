@@ -3,7 +3,7 @@ import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useColorScheme } from "react-native";
 import { Colors } from "@shared/constants/Colors";
-import { ClerkProvider } from "@clerk/expo";
+import { ClerkProvider, useAuth } from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
 import { hydrateOrderHistory } from "@modules/cart/store/useOrderHistoryStore";
 import { hydrateConsultationHistory } from "@modules/consultation/store/useConsultationHistoryStore";
@@ -16,18 +16,28 @@ if (!publishableKey) {
   );
 }
 
+// Hydrates Supabase-backed stores only after Clerk has a session, so the
+// requests carry the user's JWT and pass RLS.
+function HydrateOnAuth() {
+  const { isLoaded, isSignedIn } = useAuth();
+
+  useEffect(() => {
+    if (isLoaded && isSignedIn) {
+      hydrateOrderHistory();
+      hydrateConsultationHistory();
+    }
+  }, [isLoaded, isSignedIn]);
+
+  return null;
+}
+
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? "light"] ?? Colors.light;
 
-  // Hydrate order history stores from Supabase on app start
-  useEffect(() => {
-    hydrateOrderHistory();
-    hydrateConsultationHistory();
-  }, []);
-
   return (
     <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
+      <HydrateOnAuth />
       <StatusBar style="auto" />
       <Stack
         screenOptions={{

@@ -16,7 +16,31 @@ const SYSTEM_PROMPT = `You are **Coach Jim**, a fitness coach with over 15 years
 
 Style: Super friendly, casual, always respond in **Bahasa Indonesia**. Keep fitness terms in English but explain in Indonesian. Keep responses concise for mobile chat. Use bullet points. End with an encouraging line or follow-up question.
 
-Rules: Ask clarifying questions first. Never diagnose injuries. Don't prescribe supplement brands. Never promote extreme diets. Prioritize long-term health.`;
+Rules: Ask clarifying questions first. Never diagnose injuries. Don't prescribe supplement brands. Never promote extreme diets. Prioritize long-term health.
+
+If user context (intake) is provided below, treat it as ground truth — already known. NEVER ask the user to repeat their goals, allergies, health concerns, or diet preference if those are listed. Tailor every recommendation around them (e.g. avoid foods they're allergic to, respect their diet, work toward their stated body goals, factor in their health concerns).`;
+
+// ── Build the intake context block from channel custom fields ─────
+function buildIntakeContext(channel: Record<string, unknown> | undefined): string {
+  if (!channel) return "";
+  const get = (k: string) => {
+    const v = channel[k];
+    return typeof v === "string" ? v.trim() : "";
+  };
+  const name = get("intake_user_name");
+  const goals = get("intake_body_goals");
+  const concern = get("intake_health_concern");
+  const allergy = get("intake_food_allergy");
+  const diet = get("intake_diet_preference");
+
+  const lines: string[] = [];
+  if (name) lines.push(`- User name: ${name}`);
+  if (goals) lines.push(`- Body goals: ${goals}`);
+  if (concern) lines.push(`- Health concerns: ${concern}`);
+  if (allergy) lines.push(`- Food allergies / dietary restrictions: ${allergy}`);
+  if (diet) lines.push(`- Diet preference: ${diet}`);
+  return lines.join("\n");
+}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -81,6 +105,41 @@ async function sendToGetStream(
   console.log("[send] OK");
 }
 
+// ── Verify GetStream webhook signature ─────────────────────────
+// GetStream signs every webhook with HMAC-SHA256 of the raw body using
+// the application's API secret, hex-encoded, in the X-Signature header.
+// Reject anything that doesn't match — otherwise anyone on the internet
+// could trigger Coach Jim replies and burn our Gemini quota.
+async function verifyStreamSignature(
+  rawBody: string,
+  signature: string | null,
+): Promise<boolean> {
+  if (!signature) return false;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(STREAM_API_SECRET),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sigBytes = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(rawBody),
+  );
+  const expected = Array.from(new Uint8Array(sigBytes))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return timingSafeEqual(signature.toLowerCase(), expected);
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 // ── In-memory dedup (prevents rapid retries within same instance) ───
 const processed = new Set<string>();
 
@@ -90,11 +149,18 @@ async function handleMessage(
   msgId: string,
   chType: string,
   chId: string,
+  intakeContext: string,
 ) {
   try {
+    // Compose the system prompt — append the user's intake (if any) so Coach
+    // Jim is aware of allergies, goals, and concerns from before payment.
+    const systemText = intakeContext
+      ? `${SYSTEM_PROMPT}\n\n## User context (from intake before payment):\n${intakeContext}`
+      : SYSTEM_PROMPT;
+
     // Call Gemini (with model fallback)
     const geminiBody = JSON.stringify({
-      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      system_instruction: { parts: [{ text: systemText }] },
       contents: [{ role: "user", parts: [{ text: msgText }] }],
       generationConfig: { temperature: 0.8, maxOutputTokens: 1024 },
     });
@@ -145,7 +211,21 @@ serve(async (req: Request) => {
   }
 
   try {
-    const body = await req.json();
+    // Read raw body so we can verify the HMAC signature before trusting any
+    // of its contents. JSON.parse only after the signature checks out.
+    const rawBody = await req.text();
+    const signature =
+      req.headers.get("x-signature") || req.headers.get("X-Signature");
+    const ok = await verifyStreamSignature(rawBody, signature);
+    if (!ok) {
+      console.warn("[webhook] Invalid signature — rejecting");
+      return new Response(JSON.stringify({ error: "invalid signature" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const body = JSON.parse(rawBody);
     const msg = body.message;
     const sender = msg?.user?.id || body.user?.id;
     const chId = body.channel_id;
@@ -172,9 +252,17 @@ serve(async (req: Request) => {
 
     console.log(`[webhook] Accepted: "${msg.text}" (${msgId})`);
 
+    // GetStream webhook payloads include the channel object with custom
+    // fields. Build the intake context once here so Coach Jim's reply
+    // factors in the user's allergies, goals, and concerns.
+    const intakeContext = buildIntakeContext(body.channel);
+    if (intakeContext) {
+      console.log(`[webhook] Using intake context (${intakeContext.length} chars)`);
+    }
+
     // ⚡ Fire-and-forget: process in background, return 200 IMMEDIATELY
     // This prevents GetStream from retrying the webhook
-    handleMessage(msg.text, msgId, chType, chId);
+    handleMessage(msg.text, msgId, chType, chId, intakeContext);
 
     return jsonOk({ status: "accepted" });
   } catch (err: any) {

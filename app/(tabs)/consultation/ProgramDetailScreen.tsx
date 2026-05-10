@@ -149,6 +149,12 @@ export default function ProgramDetailScreen() {
                 planId: plan.subscription_plan,
                 planImage: plan.image,
                 planNotes: JSON.stringify(plan.important_notes),
+                intake: JSON.stringify({
+                  healthConcern: healthConcern.trim(),
+                  foodAllergy: foodAllergy.trim(),
+                  bodyGoals: bodyGoals.trim(),
+                  dietPreference: selectedDiet ?? "",
+                }),
               },
             });
           }

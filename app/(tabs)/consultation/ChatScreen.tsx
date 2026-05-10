@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import {
   View,
   FlatList,
@@ -10,6 +10,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Animated,
+  Easing,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
@@ -19,6 +21,7 @@ import ThemedText from "@shared/components/ui/ThemedText";
 import { useConsultationHistoryStore } from "@modules/consultation/store/useConsultationHistoryStore";
 import { useFitnessChat } from "@modules/consultation/hooks/useFitnessChat";
 import type { ChatMessageItem } from "@shared/types/chat";
+import type { ConsultationIntake } from "@shared/types/data";
 
 // Coach profile data
 const COACH = {
@@ -69,29 +72,98 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
 );
 
 // ── Typing Indicator Component ────────────────────────────────
-const TypingIndicator: React.FC = () => (
-  <View style={[styles.bubbleRow, styles.bubbleRowLeft]}>
-    <Image source={{ uri: COACH.avatar }} style={styles.bubbleAvatar} />
-    <View style={[styles.bubble, styles.coachBubble, styles.typingBubble]}>
-      <View style={styles.typingDots}>
-        <View style={[styles.dot, styles.dot1]} />
-        <View style={[styles.dot, styles.dot2]} />
-        <View style={[styles.dot, styles.dot3]} />
+const useDotBounce = (delay: number) => {
+  const value = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(value, {
+          toValue: 1,
+          duration: 350,
+          delay,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(value, {
+          toValue: 0,
+          duration: 350,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(value, {
+          toValue: 0,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [value, delay]);
+
+  return {
+    transform: [
+      {
+        translateY: value.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, -6],
+        }),
+      },
+    ],
+    opacity: value.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0.5, 1],
+    }),
+  };
+};
+
+const TypingIndicator: React.FC = () => {
+  const dot1 = useDotBounce(0);
+  const dot2 = useDotBounce(150);
+  const dot3 = useDotBounce(300);
+
+  return (
+    <View style={[styles.bubbleRow, styles.bubbleRowLeft]}>
+      <Image source={{ uri: COACH.avatar }} style={styles.bubbleAvatar} />
+      <View style={[styles.bubble, styles.coachBubble, styles.typingBubble]}>
+        <View style={styles.typingDots}>
+          <Animated.View style={[styles.dot, dot1]} />
+          <Animated.View style={[styles.dot, dot2]} />
+          <Animated.View style={[styles.dot, dot3]} />
+        </View>
       </View>
     </View>
-  </View>
-);
+  );
+};
 
 // ── Main ChatScreen ───────────────────────────────────────────
 export default function ChatScreen() {
-  const { orderId, planName } = useLocalSearchParams<{
+  const { orderId, planName, intake: intakeParam } = useLocalSearchParams<{
     orderId: string;
     planName: string;
+    intake?: string;
   }>();
 
   const endSession = useConsultationHistoryStore((s) => s.endSession);
   const [messageText, setMessageText] = useState("");
   const flatListRef = useRef<FlatList>(null);
+
+  // Resolve intake from route params first, then from the active session in
+  // the local store. Channels created with intake on the server already
+  // carry it as custom data, so this only matters for the first connect.
+  const intake = useMemo<ConsultationIntake | undefined>(() => {
+    if (intakeParam) {
+      try {
+        return JSON.parse(intakeParam) as ConsultationIntake;
+      } catch {
+        // fall through
+      }
+    }
+    return useConsultationHistoryStore
+      .getState()
+      .orders.find((o) => o.id === orderId)?.intake;
+  }, [intakeParam, orderId]);
 
   // ── Custom hook: all chat logic extracted here ──────────
   const {
@@ -101,7 +173,7 @@ export default function ChatScreen() {
     error,
     sendMessage,
     clientReady,
-  } = useFitnessChat(orderId);
+  } = useFitnessChat(orderId, intake);
 
   // ── Send handler ────────────────────────────────────────
   const handleSend = useCallback(() => {
@@ -489,11 +561,8 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: "rgba(255, 255, 255, 0.6)",
+    backgroundColor: "#FFFFFF",
   },
-  dot1: { opacity: 0.4 },
-  dot2: { opacity: 0.7 },
-  dot3: { opacity: 1.0 },
 
   /* ── Input Bar ── */
   inputBar: {

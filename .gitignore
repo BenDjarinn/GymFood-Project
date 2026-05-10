@@ -6,6 +6,9 @@ node_modules/
 # Agents
 .agents/
 
+# Claude
+.claude/
+
 # Supabase
 supabase/.temp/
 

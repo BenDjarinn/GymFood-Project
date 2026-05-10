@@ -56,6 +56,13 @@ export interface OrderHistoryState {
 }
 
 // Consultation order history types
+export interface ConsultationIntake {
+  healthConcern: string;
+  foodAllergy: string;
+  bodyGoals: string;
+  dietPreference: string;
+}
+
 export interface CompletedConsultationOrder {
   id: string;
   planName: string;       // "Beginner" | "Advanced" | "Pro"
@@ -63,6 +70,7 @@ export interface CompletedConsultationOrder {
   planNotes: string[];    // the bullet-point notes
   paidAt: string;         // ISO timestamp
   status: "active" | "done"; // tracks session lifecycle
+  intake?: ConsultationIntake; // user's pre-payment program details
 }
 
 export interface ConsultationHistoryState {

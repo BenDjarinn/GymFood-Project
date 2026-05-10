@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { getClerkInstance } from "@clerk/expo";
 import {
   ConsultationHistoryState,
   CompletedConsultationOrder,
@@ -10,10 +11,14 @@ export const useConsultationHistoryStore = create<ConsultationHistoryState>(
     orders: [],
 
     addOrder: async (order: CompletedConsultationOrder) => {
-      // Update local state immediately for responsiveness
       set((state) => ({ orders: [order, ...state.orders] }));
 
-      // Persist to Supabase in the background
+      const userId = getClerkInstance().user?.id;
+      if (!userId) {
+        console.warn("Cannot persist consultation order: no signed-in Clerk user");
+        return;
+      }
+
       try {
         const { error } = await supabase.from("consultation_orders").insert({
           id: order.id,
@@ -22,6 +27,7 @@ export const useConsultationHistoryStore = create<ConsultationHistoryState>(
           plan_notes: order.planNotes,
           paid_at: order.paidAt,
           status: order.status,
+          user_id: userId,
         });
 
         if (error) {

@@ -5,9 +5,9 @@ import ThemedText from "@shared/components/ui/ThemedText";
 
 interface ForumPostProps {
   author_name: string;
-  author_avatar: string;
+  author_avatar: string | null;
   title: string;
-  image: string;
+  image: string | null;
   description: string;
   likes: number;
   comments: number;
@@ -67,9 +67,11 @@ const ForumPost: React.FC<ForumPostProps> = ({
       <ThemedText style={styles.title}>{title}</ThemedText>
 
       {/* ── Post Image ── */}
-      <View style={styles.imageWrap}>
-        <Image source={{ uri: image }} style={styles.postImage} />
-      </View>
+      {image ? (
+        <View style={styles.imageWrap}>
+          <Image source={{ uri: image }} style={styles.postImage} />
+        </View>
+      ) : null}
 
       {/* ── Description ── */}
       <ThemedText style={styles.description} numberOfLines={3}>

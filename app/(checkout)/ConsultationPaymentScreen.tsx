@@ -15,13 +15,14 @@ import { LoadingOverlay } from "@/shared/components/ui/LoadingOverlay";
 import { SuccessPopup } from "@/shared/components/ui/SuccessPopup";
 
 import { useConsultationHistoryStore } from "@modules/consultation/store/useConsultationHistoryStore";
-import { CompletedConsultationOrder } from "@shared/types/data";
+import { CompletedConsultationOrder, ConsultationIntake } from "@shared/types/data";
 
 const ConsultationPayment: React.FC = () => {
   const params = useLocalSearchParams<{
     planId: string;
     planImage: string;
     planNotes: string;
+    intake?: string;
   }>();
 
   const planId = params.planId ?? "";
@@ -32,6 +33,16 @@ const ConsultationPayment: React.FC = () => {
       return JSON.parse(params.planNotes ?? "[]");
     } catch {
       return [];
+    }
+  })();
+  // intake captured from ProgramDetailScreen — forwarded to chat so Coach Jim
+  // already knows the user's concerns, allergies, diet, and goals.
+  const intake: ConsultationIntake | undefined = (() => {
+    if (!params.intake) return undefined;
+    try {
+      return JSON.parse(params.intake);
+    } catch {
+      return undefined;
     }
   })();
 
@@ -113,6 +124,7 @@ const ConsultationPayment: React.FC = () => {
               planNotes,
               paidAt: new Date().toISOString(),
               status: "active",
+              intake,
             };
             useConsultationHistoryStore.getState().addOrder(order);
 
@@ -190,6 +202,7 @@ const ConsultationPayment: React.FC = () => {
               params: {
                 orderId: currentOrderRef.current.id,
                 planName: currentOrderRef.current.planName,
+                ...(intake ? { intake: JSON.stringify(intake) } : {}),
               },
             });
           }

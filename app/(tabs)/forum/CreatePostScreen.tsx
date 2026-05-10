@@ -10,10 +10,12 @@ import {
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
+import { useUser } from "@clerk/expo";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 
 import ThemedView from "@shared/components/ui/ThemedView";
 import ThemedText from "@shared/components/ui/ThemedText";
+import { supabase } from "@shared/utils/supabase";
 
 const CATEGORIES = [
   { label: "Healthy Recipes" },
@@ -23,6 +25,8 @@ const CATEGORIES = [
 ];
 
 export default function CreatePostScreen() {
+  const { user } = useUser();
+
   const [title, setTitle] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>(
     CATEGORIES[0].label
@@ -31,12 +35,59 @@ export default function CreatePostScreen() {
   const [titleFocused, setTitleFocused] = useState(false);
   const [descFocused, setDescFocused] = useState(false);
   const [imageUri, setImageUri] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const isFormValid = title.trim().length > 0 && description.trim().length > 0;
 
-  const handlePost = () => {
-    if (!isFormValid) return;
+  const uploadImage = async (localUri: string, userId: string): Promise<string> => {
+    const ext = (localUri.split(".").pop() ?? "jpg").toLowerCase();
+    const contentType =
+      ext === "png" ? "image/png" : ext === "heif" ? "image/heif" : "image/jpeg";
+    const path = `${userId}/${Date.now()}.${ext}`;
 
+    // Expo SDK 54 / RN 0.81 supports fetch on file:// → arrayBuffer.
+    const arrayBuffer = await fetch(localUri).then((r) => r.arrayBuffer());
+
+    const { error: uploadErr } = await supabase.storage
+      .from("forum-images")
+      .upload(path, arrayBuffer, { contentType, upsert: false });
+    if (uploadErr) throw uploadErr;
+
+    const { data } = supabase.storage.from("forum-images").getPublicUrl(path);
+    return data.publicUrl;
+  };
+
+  const handlePost = async () => {
+    if (!isFormValid || submitting) return;
+    if (!user?.id) {
+      Alert.alert("Not signed in", "Please sign in to post.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      let imageUrl: string | null = null;
+      if (imageUri) {
+        imageUrl = await uploadImage(imageUri, user.id);
+      }
+
+      const { error } = await supabase.from("forum_posts").insert({
+        user_id: user.id,
+        author_name: user.firstName ?? user.username ?? "Anonymous",
+        author_avatar: user.imageUrl ?? null,
+        title: title.trim(),
+        category: selectedCategory,
+        image: imageUrl,
+        description: description.trim(),
+      });
+      if (error) throw error;
+
+      router.back();
+    } catch (err: any) {
+      Alert.alert("Failed to post", err.message ?? "Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const pickImage = async () => {
@@ -168,14 +219,16 @@ export default function CreatePostScreen() {
         {/* ── Post Button ── */}
         <Pressable
           onPress={handlePost}
-          disabled={!isFormValid}
+          disabled={!isFormValid || submitting}
           style={({ pressed }) => [
             styles.postButton,
-            !isFormValid && styles.postButtonDisabled,
-            pressed && isFormValid && { opacity: 0.85, transform: [{ scale: 0.97 }] },
+            (!isFormValid || submitting) && styles.postButtonDisabled,
+            pressed && isFormValid && !submitting && { opacity: 0.85, transform: [{ scale: 0.97 }] },
           ]}
         >
-          <ThemedText style={styles.postButtonText}>Post</ThemedText>
+          <ThemedText style={styles.postButtonText}>
+            {submitting ? "Posting..." : "Post"}
+          </ThemedText>
           <MaterialIcons name="send" size={26} color="#fff" />
         </Pressable>
       </ScrollView>

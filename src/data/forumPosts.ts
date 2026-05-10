@@ -1,9 +1,9 @@
 export interface ForumPostData {
   author_name: string;
-  author_avatar: string;
+  author_avatar: string | null;
   title: string;
   category?: string;
-  image: string;
+  image: string | null;
   description: string;
   likes: number;
   comments: number;
