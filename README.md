@@ -18,6 +18,31 @@
 
 ---
 
+## 🧭 The Story Behind GymFood
+
+### The Problem
+
+Anyone who's tried to eat healthy while training seriously knows the friction. You open a food delivery app — it's built for cravings, not macros. You search for a nutritionist — it costs hundreds per session. You join a fitness group online — the advice is scattered, unverified, and buried under noise.
+
+The three things a fitness-focused person needs most — **clean food**, **real community**, and **expert guidance** — exist in completely separate places, each with their own cost and inconvenience. There's no single space that respects both your goals and your time.
+
+### The Solution
+
+GymFood brings all three into one app, purpose-built for the gym crowd.
+
+Instead of a generic food delivery experience, you get a curated menu designed around fitness nutrition. Instead of a generic social feed, you get a community that speaks your language — macros, meal prep, training splits. And instead of paying premium rates for a human coach, you get an AI consultation experience powered by Claude that responds with the depth and nuance of a certified professional — available anytime, at no extra cost.
+
+The goal wasn't to build three separate apps stitched together. It was to design a single, coherent experience where ordering a post-workout meal, asking about your protein intake, and sharing your progress all feel like they belong in the same place.
+
+### Expected Impact
+
+- **Accessibility** — Quality fitness nutrition advice shouldn't be gated behind expensive coaching fees. GymFood makes expert-level guidance available to anyone with a phone.
+- **Consistency** — Having food, community, and coaching in one place reduces the friction that causes people to fall off their fitness routines.
+- **Community-driven accountability** — A focused community of like-minded people creates organic motivation that generic social platforms can't replicate.
+- **Smarter food choices** — When healthy options are as easy to order as fast food, the default choice changes.
+
+---
+
 ## 🛠️ Tech Stack
 
 | Technology | Reason |
