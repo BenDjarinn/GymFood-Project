@@ -111,7 +111,7 @@ gymfood/
 
 ```bash
 git clone https://github.com/BenDjarinn/GymFood-Project.git
-cd gymfood
+cd GymFood-Project
 npm install
 ```
 
