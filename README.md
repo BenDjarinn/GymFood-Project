@@ -125,6 +125,8 @@ EXPO_PUBLIC_SUPABASE_URL=your_supabase_url
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 EXPO_PUBLIC_STREAM_API_KEY=your_stream_api_key
 EXPO_PUBLIC_STREAM_TOKEN_URL=your_stream_token_endpoint
+
+SUPABASE_ACCESS_TOKEN=your_supabase_access_token
 ```
 
 All services have free tiers:
