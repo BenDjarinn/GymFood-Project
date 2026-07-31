@@ -153,7 +153,9 @@ serve(async (req: Request) => {
     }
 
     // 4. Issue GetStream token + initialise channel
-    const serverClient = StreamChat.getInstance(STREAM_API_KEY, STREAM_API_SECRET);
+    const serverClient = StreamChat.getInstance(STREAM_API_KEY, STREAM_API_SECRET, {
+      timeout: 10000,
+    });
 
     await serverClient.upsertUsers([
       { id: userId, name: userName || "User", role: "user" },

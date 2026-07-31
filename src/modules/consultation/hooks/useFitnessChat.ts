@@ -11,6 +11,15 @@ const TOKEN_URL = process.env.EXPO_PUBLIC_STREAM_TOKEN_URL!;
 /** Timeout for coach typing indicator (ms) */
 const TYPING_TIMEOUT = 45_000;
 
+/** Client-side timeout for the token fetch (ms) — generous to handle cold starts */
+const TOKEN_FETCH_TIMEOUT = 15_000;
+
+/** Maximum number of retry attempts for the token fetch */
+const TOKEN_MAX_RETRIES = 3;
+
+/** Base delay between retries (ms) — doubled on each attempt */
+const TOKEN_RETRY_BASE_DELAY = 2_000;
+
 /**
  * Custom hook that encapsulates all GetStream chat logic for the
  * fitness consultation. Keeps the ChatScreen component focused
@@ -51,30 +60,66 @@ export function useFitnessChat(orderId: string, intake?: ConsultationIntake) {
         setIsLoading(true);
         setError(null);
 
-        // 1. Fetch token from backend Edge Function. The Clerk session JWT
-        // proves caller identity; the function verifies it server-side via
-        // Clerk's JWKS and confirms orderId belongs to this user.
+        // 1. Fetch token from backend Edge Function with retry logic.
+        // The function can time out on cold starts, so we retry with backoff.
         const clerkToken = await getToken();
         if (!clerkToken) throw new Error("Not signed in");
 
-        const tokenRes = await fetch(TOKEN_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${clerkToken}`,
-          },
-          body: JSON.stringify({
-            userId,
-            userName: user.firstName ?? "User",
-            orderId,
-            intake: intakeRef.current,
-          }),
-        });
+        let tokenRes: Response | undefined;
+        let lastError: Error | undefined;
 
-        if (!tokenRes.ok) {
-          const errBody = await tokenRes.text().catch(() => "");
+        for (let attempt = 0; attempt < TOKEN_MAX_RETRIES; attempt++) {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(
+              () => controller.abort(),
+              TOKEN_FETCH_TIMEOUT,
+            );
+
+            tokenRes = await fetch(TOKEN_URL, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${clerkToken}`,
+              },
+              body: JSON.stringify({
+                userId,
+                userName: user.firstName ?? "User",
+                orderId,
+                intake: intakeRef.current,
+              }),
+              signal: controller.signal,
+            });
+
+            clearTimeout(timeoutId);
+
+            // On success or non-retryable client errors, stop retrying
+            if (tokenRes.ok || (tokenRes.status >= 400 && tokenRes.status < 500)) {
+              break;
+            }
+
+            // Server error (5xx) — retry after backoff
+            lastError = new Error(
+              `Server error ${tokenRes.status}`,
+            );
+          } catch (err: any) {
+            lastError = err;
+          }
+
+          // Wait before retrying (exponential backoff)
+          if (attempt < TOKEN_MAX_RETRIES - 1) {
+            await new Promise((r) =>
+              setTimeout(r, TOKEN_RETRY_BASE_DELAY * Math.pow(2, attempt)),
+            );
+          }
+        }
+
+        if (!tokenRes || !tokenRes.ok) {
+          const errBody = tokenRes
+            ? await tokenRes.text().catch(() => "")
+            : lastError?.message || "Request failed";
           throw new Error(
-            `Failed to get chat token (${tokenRes.status})${errBody ? `: ${errBody}` : ""}`
+            `Failed to get chat token (${tokenRes?.status ?? "network"})${errBody ? `: ${errBody}` : ""}`,
           );
         }
 

@@ -18,13 +18,6 @@ import paymentMethods from "@/data/paymentMethod";
 import { paymentIcons } from "@shared/constants/paymentIcons";
 import { PaymentMethod } from "@shared/types/data";
 
-import Geocoder from "react-native-geocoding";
-
-const GEOCODING_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY ?? "";
-if (GEOCODING_API_KEY) {
-  Geocoder.init(GEOCODING_API_KEY);
-}
-
 const TAX = 2000;
 const HEALTH_INSURANCE = 8000;
 
@@ -42,6 +35,7 @@ const OrderDetails: React.FC = () => {
 
   const [lat, setLat] = useState(-6.2);
   const [lng, setLng] = useState(106.8);
+  const [address, setAddress] = useState<string | undefined>();
 
   const subTotalFood = cartItems.reduce(
     (sum, it) => sum + Number(it.meal?.price ?? 0) * (it.qty ?? 0),
@@ -69,9 +63,11 @@ const OrderDetails: React.FC = () => {
       <OrderMap
         latitude={lat}
         longitude={lng}
-        onLocationChange={(newLat, newLng) => {
+        address={address}
+        onLocationChange={(newLat, newLng, newAddress) => {
           setLat(newLat);
           setLng(newLng);
+          if (newAddress) setAddress(newAddress);
         }}
       />
 

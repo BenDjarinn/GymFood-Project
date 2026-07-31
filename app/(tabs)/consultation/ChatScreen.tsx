@@ -13,7 +13,7 @@ import {
   Animated,
   Easing,
 } from "react-native";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams, useNavigation, useFocusEffect } from "expo-router";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 
 import ThemedView from "@shared/components/ui/ThemedView";
@@ -144,6 +144,33 @@ export default function ChatScreen() {
     planName: string;
     intake?: string;
   }>();
+
+  // ── Hide tab bar only when ChatScreen is focused ────────
+  const navigation = useNavigation();
+  useFocusEffect(
+    useCallback(() => {
+      const parent = navigation.getParent();
+      parent?.setOptions({ tabBarStyle: { display: "none" } });
+
+      return () => {
+        parent?.setOptions({
+          tabBarStyle: {
+            display: "flex",
+            backgroundColor: "#FFFFFF",
+            borderTopWidth: 0,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: -2 },
+            shadowOpacity: 0.08,
+            shadowRadius: 8,
+            elevation: 8,
+            paddingTop: 25,
+            paddingBottom: 30,
+            paddingHorizontal: 8,
+          },
+        });
+      };
+    }, [navigation])
+  );
 
   const endSession = useConsultationHistoryStore((s) => s.endSession);
   const [messageText, setMessageText] = useState("");

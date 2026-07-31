@@ -49,6 +49,8 @@ export default function RootLayout() {
         <Stack.Screen name="(auth)" options={{ headerShown: false }} />
         <Stack.Screen name="index" options={{ title: "Home" }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="(checkout)" options={{ headerShown: false }} />
+        <Stack.Screen name="(review)" options={{ headerShown: false }} />
       </Stack>
     </ClerkProvider>
   );

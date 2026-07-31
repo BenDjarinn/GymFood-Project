@@ -18,13 +18,13 @@ The three things a serious gym-goer needs most — **clean food, real community,
 
 ## What It Does
 
-| Feature | What it actually means |
-|---|---|
-| 🛒 **Healthy Meal Ordering** | A curated food delivery experience built around fitness nutrition — not just "salad options" slapped on a generic menu |
-| 💬 **Fitness Community** | A focused forum for people who speak your language — macros, meal prep, training splits, recovery |
-| 🤖 **AI Coaching** | Chat with an AI coach (powered by Gemini) that responds with the depth of a certified professional — available anytime, no booking required |
-| 📋 **Order & Session History** | All your past meals and consultations in one place |
-| 👤 **Profile Management** | Preferences, goals, account settings — everything in one spot |
+| Feature                        | What it actually means                                                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🛒 **Healthy Meal Ordering**   | A curated food delivery experience built around fitness nutrition — not just "salad options" slapped on a generic menu                      |
+| 💬 **Fitness Community**       | A focused forum for people who speak your language — macros, meal prep, training splits, recovery                                           |
+| 🤖 **AI Coaching**             | Chat with an AI coach (powered by Gemini) that responds with the depth of a certified professional — available anytime, no booking required |
+| 📋 **Order & Session History** | All your past meals and consultations in one place                                                                                          |
+| 👤 **Profile Management**      | Preferences, goals, account settings — everything in one spot                                                                               |
 
 ---
 
@@ -32,7 +32,7 @@ The three things a serious gym-goer needs most — **clean food, real community,
 
 This started as a portfolio project, but the problem it solves is real.
 
-Fitness apps are either too broad (generic food delivery) or too niche (obsessive calorie trackers). The missing piece is an app that respects that fitness is a *lifestyle* — not just a macro number to hit. Food, community, and coaching all feed into each other. Separating them creates drop-off.
+Fitness apps are either too broad (generic food delivery) or too niche (obsessive calorie trackers). The missing piece is an app that respects that fitness is a _lifestyle_ — not just a macro number to hit. Food, community, and coaching all feed into each other. Separating them creates drop-off.
 
 The design goal: make all three feel like they belong in the same place, not three apps stitched together.
 
@@ -40,17 +40,17 @@ The design goal: make all three feel like they belong in the same place, not thr
 
 ## Tech Stack — and Why
 
-| Technology | Why this, not the alternative |
-|---|---|
-| **React Native 0.81** | Cross-platform from one codebase — Flutter was considered but RN's ecosystem for this specific feature set (maps, chat, auth) was more mature |
-| **Expo SDK 54** | Dramatically reduces native config overhead; OTA updates mean no re-submitting to the store for small fixes |
-| **Expo Router v6** | File-based routing keeps navigation predictable at scale; deep linking comes for free |
-| **Supabase** | Chose over Firebase for real SQL support and better Row Level Security — critical for user data isolation |
-| **Clerk** | Handles Google OAuth + session management out of the box; saved ~2 days vs rolling custom auth |
-| **Zustand** | Redux was overkill for this scope; Zustand's slice pattern gave clean state isolation without boilerplate |
-| **React Hook Form + Zod** | Schema-first validation catches errors at the type level before they hit the API |
-| **Stream Chat** | Production-grade real-time chat in ~1 day of integration vs building from scratch with WebSockets |
-| **Gemini AI API** | Multimodal support (text + image) fit the coaching + food analysis use case; competitive with Claude for this specific task |
+| Technology                | Why this, not the alternative                                                                                                                 |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **React Native 0.81**     | Cross-platform from one codebase — Flutter was considered but RN's ecosystem for this specific feature set (maps, chat, auth) was more mature |
+| **Expo SDK 54**           | Dramatically reduces native config overhead; OTA updates mean no re-submitting to the store for small fixes                                   |
+| **Expo Router v6**        | File-based routing keeps navigation predictable at scale; deep linking comes for free                                                         |
+| **Supabase**              | Chose over Firebase for real SQL support and better Row Level Security — critical for user data isolation                                     |
+| **Clerk**                 | Handles Google OAuth + session management out of the box; saved ~2 days vs rolling custom auth                                                |
+| **Zustand**               | Redux was overkill for this scope; Zustand's slice pattern gave clean state isolation without boilerplate                                     |
+| **React Hook Form + Zod** | Schema-first validation catches errors at the type level before they hit the API                                                              |
+| **Stream Chat**           | Production-grade real-time chat in ~1 day of integration vs building from scratch with WebSockets                                             |
+| **Gemini AI API**         | Multimodal support (text + image) fit the coaching + food analysis use case; competitive with Claude for this specific task                   |
 
 ---
 
@@ -131,12 +131,12 @@ SUPABASE_ACCESS_TOKEN=your_supabase_access_token
 
 All services have free tiers:
 
-| Key | Where to get it |
-|---|---|
-| `CLERK_PUBLISHABLE_KEY` | [clerk.com](https://clerk.com) → Create app → API Keys |
-| `SUPABASE_URL` + `ANON_KEY` | [supabase.com](https://supabase.com) → Settings → API |
-| `STREAM_API_KEY` | [getstream.io](https://getstream.io) → Create Chat app → Dashboard |
-| `STREAM_TOKEN_URL` | Deploy the `stream-token` Edge Function from `/supabase` folder |
+| Key                         | Where to get it                                                    |
+| --------------------------- | ------------------------------------------------------------------ |
+| `CLERK_PUBLISHABLE_KEY`     | [clerk.com](https://clerk.com) → Create app → API Keys             |
+| `SUPABASE_URL` + `ANON_KEY` | [supabase.com](https://supabase.com) → Settings → API              |
+| `STREAM_API_KEY`            | [getstream.io](https://getstream.io) → Create Chat app → Dashboard |
+| `STREAM_TOKEN_URL`          | Deploy the `stream-token` Edge Function from `/supabase` folder    |
 
 ### Run
 
@@ -144,12 +144,12 @@ All services have free tiers:
 npx expo start
 ```
 
-| Target | How |
-|---|---|
-| Android | Press `a` |
-| iOS | Press `i` |
+| Target          | How                  |
+| --------------- | -------------------- |
+| Android         | Press `a`            |
+| iOS             | Press `i`            |
 | Physical device | Scan QR with Expo Go |
-| Web | Press `w` |
+| Web             | Press `w`            |
 
 ---
 
