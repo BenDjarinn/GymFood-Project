@@ -1,4 +1,5 @@
 export interface ForumPostData {
+  id: string;
   author_name: string;
   author_avatar: string | null;
   title: string;
@@ -12,6 +13,7 @@ export interface ForumPostData {
 
 const forumPosts: ForumPostData[] = [
   {
+    id: "fallback-stewart",
     author_name: "Stewart",
     author_avatar: "https://example.com/avatars/stewart.jpg",
     title: "7 Days Menu",
@@ -24,6 +26,7 @@ const forumPosts: ForumPostData[] = [
     bookmarks: 10,
   },
   {
+    id: "fallback-felto",
     author_name: "Felto",
     author_avatar: "https://example.com/avatars/felto.jpg",
     title: "Healthy LunchBox",

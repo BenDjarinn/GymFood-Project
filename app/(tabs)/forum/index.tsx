@@ -11,7 +11,7 @@ import { useSupabaseForum } from "@shared/hooks/useSupabaseForum";
 export default function ForumScreen() {
   const [searchText, setSearchText] = useState("");
 
-  const { posts, refetch } = useSupabaseForum();
+  const { posts, refetch, toggleLike, toggleBookmark } = useSupabaseForum();
 
   // Re-fetch every time the tab regains focus so newly-created posts appear.
   useFocusEffect(
@@ -53,7 +53,8 @@ export default function ForumScreen() {
       >
         {posts.map((post, index) => (
           <ForumPost
-            key={`${post.title}-${index}`}
+            key={post.id || `${post.title}-${index}`}
+            id={post.id}
             author_name={post.author_name}
             author_avatar={post.author_avatar}
             title={post.title}
@@ -63,6 +64,8 @@ export default function ForumScreen() {
             comments={post.comments}
             bookmarks={post.bookmarks}
             category={post.category}
+            onToggleLike={toggleLike}
+            onToggleBookmark={toggleBookmark}
           />
         ))}
       </ScrollView>

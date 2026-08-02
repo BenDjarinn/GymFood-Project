@@ -36,22 +36,82 @@ const GREEN = "#37A446";
 const DEFAULT_LAT = -6.2;
 const DEFAULT_LNG = 106.8;
 
-// ── Leaflet HTML ───────────────────────────────────────────
+// ── Leaflet HTML (CSS inlined, JS from Cloudflare CDN) ─────
 const buildMapHtml = (lat: number, lng: number) => `
 <!DOCTYPE html>
 <html>
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     * { margin: 0; padding: 0; }
     html, body, #map { width: 100%; height: 100%; }
+
+    /* ── Loading splash ─────────────────────────────── */
+    #splash {
+      position: fixed; inset: 0; z-index: 9999;
+      background: #F0F4F8;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 12px;
+      transition: opacity 0.3s ease;
+    }
+    #splash.hide { opacity: 0; pointer-events: none; }
+    .spinner {
+      width: 32px; height: 32px;
+      border: 3px solid #D2D4D8; border-top-color: #34699A;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #splash p { color: #34699A; font: 14px sans-serif; }
+
+    /* ── Leaflet core CSS (inlined to skip network request) ── */
+    .leaflet-pane,.leaflet-tile,.leaflet-marker-icon,.leaflet-marker-shadow,.leaflet-tile-container,.leaflet-pane>svg,.leaflet-pane>canvas,.leaflet-zoom-box,.leaflet-image-layer,.leaflet-layer{position:absolute;left:0;top:0}
+    .leaflet-container{overflow:hidden;-webkit-tap-highlight-color:transparent}
+    .leaflet-tile,.leaflet-marker-icon,.leaflet-marker-shadow{-webkit-user-select:none;-moz-user-select:none;user-select:none;-webkit-user-drag:none}
+    .leaflet-tile::selection{background:transparent}
+    .leaflet-safari .leaflet-tile{image-rendering:-webkit-optimize-contrast}
+    .leaflet-safari .leaflet-tile-container{width:1600px;height:1600px;-webkit-transform-origin:0 0}
+    .leaflet-marker-icon,.leaflet-marker-shadow{display:block}
+    .leaflet-container .leaflet-overlay-pane svg{max-width:none!important;max-height:none!important}
+    .leaflet-container .leaflet-marker-pane img,.leaflet-container .leaflet-shadow-pane img,.leaflet-container .leaflet-tile-pane img,.leaflet-container img.leaflet-image-layer,.leaflet-container .leaflet-tile{max-width:none!important;max-height:none!important;width:auto;padding:0}
+    .leaflet-container img.leaflet-tile{mix-blend-mode:plus-lighter}
+    .leaflet-container.leaflet-touch-zoom{-ms-touch-action:pan-x pan-y;touch-action:pan-x pan-y}
+    .leaflet-container.leaflet-touch-drag{-ms-touch-action:pinch-zoom;touch-action:none;touch-action:pinch-zoom}
+    .leaflet-container.leaflet-touch-drag.leaflet-touch-zoom{-ms-touch-action:none;touch-action:none}
+    .leaflet-tile{filter:inherit;visibility:hidden}
+    .leaflet-tile-loaded{visibility:inherit}
+    .leaflet-zoom-box{width:0;height:0;box-sizing:border-box;z-index:800}
+    .leaflet-overlay-pane svg{-moz-user-select:none}
+    .leaflet-pane{z-index:400}.leaflet-tile-pane{z-index:200}.leaflet-overlay-pane{z-index:400}.leaflet-shadow-pane{z-index:500}.leaflet-marker-pane{z-index:600}.leaflet-tooltip-pane{z-index:650}.leaflet-popup-pane{z-index:700}
+    .leaflet-map-pane canvas{z-index:100}.leaflet-map-pane svg{z-index:200}
+    .leaflet-control{position:relative;z-index:800;pointer-events:visiblePainted;pointer-events:auto}
+    .leaflet-top,.leaflet-bottom{position:absolute;z-index:1000;pointer-events:none}
+    .leaflet-top{top:0}.leaflet-right{right:0}.leaflet-bottom{bottom:0}.leaflet-left{left:0}
+    .leaflet-fade-anim .leaflet-popup{opacity:0;transition:opacity .2s linear}
+    .leaflet-fade-anim .leaflet-map-pane .leaflet-popup{opacity:1}
+    .leaflet-zoom-animated{-webkit-transform-origin:0 0;transform-origin:0 0}
+    svg.leaflet-zoom-animated{will-change:transform}
+    .leaflet-zoom-anim .leaflet-zoom-animated{transition:transform .25s cubic-bezier(0,0,.25,1)}
+    .leaflet-zoom-anim .leaflet-tile,.leaflet-pan-anim .leaflet-tile{transition:none}
+    .leaflet-zoom-anim .leaflet-zoom-hide{visibility:hidden}
+    .leaflet-interactive{cursor:pointer}
+    .leaflet-grab{cursor:-webkit-grab;cursor:grab}
+    .leaflet-dragging .leaflet-grab,.leaflet-dragging .leaflet-grab .leaflet-interactive,.leaflet-dragging .leaflet-marker-draggable{cursor:move;cursor:-webkit-grabbing;cursor:grabbing}
+    .leaflet-marker-icon,.leaflet-marker-shadow,.leaflet-image-layer,.leaflet-pane>svg path,.leaflet-tile-container{pointer-events:none}
+    .leaflet-marker-icon.leaflet-interactive,.leaflet-image-layer.leaflet-interactive,.leaflet-pane>svg path.leaflet-interactive,svg.leaflet-image-layer.leaflet-interactive path{pointer-events:visiblePainted;pointer-events:auto}
+    .leaflet-container{background:#ddd;outline-offset:1px}
+    .leaflet-container a{color:#0078A8}
   </style>
 </head>
 <body>
+  <!-- Loading splash (auto-hides when map tiles load) -->
+  <div id="splash"><div class="spinner"></div><p>Loading map…</p></div>
+
   <div id="map"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script>
+    var splash = document.getElementById('splash');
     var map = L.map('map', {
       center: [${lat}, ${lng}],
       zoom: 17,
@@ -59,16 +119,23 @@ const buildMapHtml = (lat: number, lng: number) => `
       attributionControl: false,
     });
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    var tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
     }).addTo(map);
 
-    // Notify RN when dragging starts
+    // Hide splash once tiles are loaded
+    tileLayer.on('load', function() {
+      splash.classList.add('hide');
+      setTimeout(function() { splash.style.display = 'none'; }, 350);
+    });
+
+    // Notify RN that the map is ready
+    window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready' }));
+
     map.on('movestart', function() {
       window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'dragstart' }));
     });
 
-    // Notify RN when dragging ends with new center
     map.on('moveend', function() {
       var center = map.getCenter();
       window.ReactNativeWebView.postMessage(JSON.stringify({
@@ -88,6 +155,7 @@ const buildMapHtml = (lat: number, lng: number) => `
 </body>
 </html>
 `;
+
 
 // ── Component ──────────────────────────────────────────────
 const LocationPicker: React.FC<LocationPickerProps> = ({

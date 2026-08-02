@@ -4,6 +4,7 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import ThemedText from "@shared/components/ui/ThemedText";
 
 interface ForumPostProps {
+  id: string;
   author_name: string;
   author_avatar: string | null;
   title: string;
@@ -14,12 +15,15 @@ interface ForumPostProps {
   bookmarks: number;
   category?: string;
   onPress?: () => void;
+  onToggleLike?: (postId: string, currentlyLiked: boolean) => void;
+  onToggleBookmark?: (postId: string, currentlySaved: boolean) => void;
 }
 
 const LIKE_COLOR = "#e56969";
 const BOOKMARK_COLOR = "#FFD700";
 
 const ForumPost: React.FC<ForumPostProps> = ({
+  id,
   author_name,
   author_avatar,
   title,
@@ -29,6 +33,8 @@ const ForumPost: React.FC<ForumPostProps> = ({
   comments,
   bookmarks,
   onPress,
+  onToggleLike,
+  onToggleBookmark,
 }) => {
   const [isLiked, setIsLiked] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
@@ -38,11 +44,13 @@ const ForumPost: React.FC<ForumPostProps> = ({
   const formatCount = (n: number) => (n > 999 ? `${(n / 1000).toFixed(0)}k` : `${n}`);
 
   const handleLike = () => {
+    onToggleLike?.(id, isLiked);
     setIsLiked((prev) => !prev);
     setLikeCount((prev) => (isLiked ? prev - 1 : prev + 1));
   };
 
   const handleBookmark = () => {
+    onToggleBookmark?.(id, isSaved);
     setIsSaved((prev) => !prev);
     setBookmarkCount((prev) => (isSaved ? prev - 1 : prev + 1));
   };
@@ -57,7 +65,7 @@ const ForumPost: React.FC<ForumPostProps> = ({
     >
       {/* ── Author Row ── */}
       <View style={styles.authorRow}>
-        <Image source={{ uri: author_avatar }} style={styles.avatar} />
+        <Image source={{ uri: author_avatar ?? undefined }} style={styles.avatar} />
         <ThemedText style={styles.authorLabel}>
           Created by <ThemedText style={styles.authorName}>{author_name}</ThemedText>
         </ThemedText>
