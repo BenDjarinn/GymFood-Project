@@ -5,14 +5,22 @@ import { useColorScheme } from "react-native";
 import { Colors } from "@shared/constants/Colors";
 import { ClerkProvider, useAuth } from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
+import { StripeProvider } from "@stripe/stripe-react-native";
 import { hydrateOrderHistory } from "@modules/cart/store/useOrderHistoryStore";
 import { hydrateConsultationHistory } from "@modules/consultation/store/useConsultationHistoryStore";
 
 const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
+const stripePublishableKey = process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY!;
 
 if (!publishableKey) {
   throw new Error(
     "Missing EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY. Add it to your .env file."
+  );
+}
+
+if (!stripePublishableKey) {
+  throw new Error(
+    "Missing EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY. Add it to your .env file."
   );
 }
 
@@ -37,21 +45,23 @@ export default function RootLayout() {
 
   return (
     <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
-      <HydrateOnAuth />
-      <StatusBar style="auto" />
-      <Stack
-        screenOptions={{
-          headerStyle: { backgroundColor: theme.navBackground },
-          headerTintColor: theme.title,
-          headerShown: false,
-        }}
-      >
-        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-        <Stack.Screen name="index" options={{ title: "Home" }} />
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="(checkout)" options={{ headerShown: false }} />
-        <Stack.Screen name="(review)" options={{ headerShown: false }} />
-      </Stack>
+      <StripeProvider publishableKey={stripePublishableKey}>
+        <HydrateOnAuth />
+        <StatusBar style="auto" />
+        <Stack
+          screenOptions={{
+            headerStyle: { backgroundColor: theme.navBackground },
+            headerTintColor: theme.title,
+            headerShown: false,
+          }}
+        >
+          <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+          <Stack.Screen name="index" options={{ title: "Home" }} />
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="(checkout)" options={{ headerShown: false }} />
+          <Stack.Screen name="(review)" options={{ headerShown: false }} />
+        </Stack>
+      </StripeProvider>
     </ClerkProvider>
   );
 }

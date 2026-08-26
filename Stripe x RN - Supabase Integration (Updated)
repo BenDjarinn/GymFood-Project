@@ -1,0 +1,1317 @@
+# Production-Ready Stripe Integration Tutorial
+
+This is the hardened, industry-standard version. Every production gap from the previous plan has been fixed.
+
+## What Makes This Production-Ready
+
+| Security Concern | How It's Handled |
+|---|---|
+| **Amount tampering** | Server calculates price from DB — client never sends the amount |
+| **Fake payment confirmations** | Stripe webhook verifies payment server-side |
+| **Lost orders** | Order created as "pending" BEFORE payment, updated to "paid" by webhook |
+| **Double charges** | Idempotency keys prevent duplicate PaymentIntents |
+| **Returning users** | Stripe Customer objects let users save cards |
+| **Payment traceability** | `stripe_payment_intent_id` saved on every order |
+
+## Architecture
+
+```mermaid
+sequenceDiagram
+    participant User as 📱 App
+    participant Edge as stripe-checkout<br/>(Edge Function)
+    participant DB as Supabase DB
+    participant Stripe as Stripe API
+    participant WH as stripe-webhook<br/>(Edge Function)
+
+    User->>Edge: POST {cartItems, type}
+    Edge->>DB: Look up meal prices
+    Edge->>DB: Create order (status: pending)
+    Edge->>Stripe: paymentIntents.create (with idempotencyKey)
+    Stripe-->>Edge: {clientSecret}
+    Edge-->>User: {clientSecret, orderId}
+    User->>User: presentPaymentSheet()
+    User->>Stripe: Card details
+    Stripe-->>User: ✅ Success
+    User->>User: Show success popup
+
+    Note over Stripe,WH: Async (seconds later)
+    Stripe->>WH: payment_intent.succeeded webhook
+    WH->>WH: Verify Stripe signature
+    WH->>DB: UPDATE order SET payment_status = 'paid'
+```
+
+---
+
+## Step 1 — Get Your Stripe Keys
+
+1. Go to [https://dashboard.stripe.com/register](https://dashboard.stripe.com/register)
+2. Toggle **"Test mode"** (top-right)
+3. Go to **Developers → API keys**
+4. Copy:
+   - **Publishable key** → `pk_test_...`
+   - **Secret key** → `sk_test_...`
+
+> [!CAUTION]
+> `sk_test_...` must NEVER appear in your React Native code or `.env` file. It stays in Supabase secrets only.
+
+---
+
+## Step 2 — Install Stripe SDK
+
+```bash
+npm install @stripe/stripe-react-native
+```
+
+> [!IMPORTANT]
+> Rebuild the native app after installing:
+> ```bash
+> npx expo run:android
+> ```
+
+---
+
+## Step 3 — Database Migration
+
+Run this SQL in **Supabase Dashboard → SQL Editor**. It adds the columns needed for proper payment tracking.
+
+```sql
+-- ============================================================
+-- Stripe Integration Migration
+-- Run in Supabase Dashboard → SQL Editor
+-- ============================================================
+
+-- ── 1. Add user_id to orders (if not exists) ─────────────────
+ALTER TABLE orders
+  ADD COLUMN IF NOT EXISTS user_id TEXT;
+
+-- ── 2. Add payment tracking columns to orders ────────────────
+ALTER TABLE orders
+  ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT 'pending',
+  ADD COLUMN IF NOT EXISTS stripe_payment_intent_id TEXT;
+
+-- Allow paid_at to be NULL for pending orders
+ALTER TABLE orders
+  ALTER COLUMN paid_at DROP NOT NULL;
+
+-- ── 3. Add payment tracking to consultation_orders ───────────
+ALTER TABLE consultation_orders
+  ADD COLUMN IF NOT EXISTS user_id TEXT,
+  ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT 'pending',
+  ADD COLUMN IF NOT EXISTS stripe_payment_intent_id TEXT;
+
+ALTER TABLE consultation_orders
+  ALTER COLUMN paid_at DROP NOT NULL;
+
+-- ── 4. Add price column to subscription_plans ────────────────
+ALTER TABLE subscription_plans
+  ADD COLUMN IF NOT EXISTS price INT NOT NULL DEFAULT 0;
+
+-- Set actual prices (adjust these to your real prices)
+UPDATE subscription_plans SET price = 150000 WHERE subscription_plan = 'Beginner';
+UPDATE subscription_plans SET price = 300000 WHERE subscription_plan = 'Advanced';
+UPDATE subscription_plans SET price = 500000 WHERE subscription_plan = 'Pro';
+
+-- ── 5. Index for webhook lookups ─────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_orders_stripe_pi
+  ON orders (stripe_payment_intent_id)
+  WHERE stripe_payment_intent_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_consultation_orders_stripe_pi
+  ON consultation_orders (stripe_payment_intent_id)
+  WHERE stripe_payment_intent_id IS NOT NULL;
+
+-- ── Done! ────────────────────────────────────────────────────
+```
+
+> [!NOTE]
+> Adjust the `UPDATE subscription_plans SET price = ...` lines to your actual consultation prices in IDR.
+
+---
+
+## Step 4 — Create `stripe-checkout` Edge Function (Production)
+
+**Create file**: `supabase/functions/stripe-checkout/index.ts`
+
+This is the biggest change from the previous version. The server now:
+- **Calculates the price itself** from the database (never trusts the client)
+- **Creates a pending order** before creating the PaymentIntent
+- **Uses idempotency keys** to prevent double charges
+- **Creates/reuses Stripe Customers** per user
+
+```typescript
+// @ts-nocheck — Runs on Deno (Supabase Edge Functions)
+// supabase/functions/stripe-checkout/index.ts
+//
+// Production-grade payment endpoint.
+// - Calculates prices server-side from the database
+// - Creates pending orders before payment
+// - Uses idempotency keys to prevent double charges
+// - Creates/reuses Stripe Customer per Clerk user
+//
+// Deploy:
+//   supabase secrets set STRIPE_SECRET_KEY=sk_test_XXXX
+//   supabase secrets set CLERK_ISSUER=https://your-clerk-issuer.clerk.accounts.dev
+//   supabase functions deploy stripe-checkout --no-verify-jwt
+//
+// Secrets required:
+//   STRIPE_SECRET_KEY, CLERK_ISSUER
+//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (auto-populated by Supabase)
+
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import Stripe from "npm:stripe@17";
+import * as jose from "npm:jose@5";
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+// ── Environment ────────────────────────────────────────────
+const STRIPE_SECRET_KEY = Deno.env.get("STRIPE_SECRET_KEY")!;
+const CLERK_ISSUER = Deno.env.get("CLERK_ISSUER")!;
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+// ── Clients ────────────────────────────────────────────────
+const JWKS = jose.createRemoteJWKSet(
+  new URL(`${CLERK_ISSUER}/.well-known/jwks.json`)
+);
+
+const stripe = new Stripe(STRIPE_SECRET_KEY, {
+  apiVersion: "2024-06-20",
+  httpClient: Stripe.createFetchHttpClient(),
+});
+
+const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+// ── Constants ──────────────────────────────────────────────
+const TAX = 2000;
+const HEALTH_INSURANCE = 8000;
+
+// ── CORS ───────────────────────────────────────────────────
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+// ── Verify Clerk JWT (reused from stream-token) ────────────
+async function verifyClerkJWT(req: Request): Promise<string> {
+  const auth =
+    req.headers.get("authorization") || req.headers.get("Authorization");
+  if (!auth?.startsWith("Bearer ")) {
+    throw new Error("Missing Bearer token");
+  }
+  const token = auth.slice("Bearer ".length).trim();
+  const { payload } = await jose.jwtVerify(token, JWKS, {
+    issuer: CLERK_ISSUER,
+  });
+  if (typeof payload.sub !== "string") {
+    throw new Error("Invalid token claims");
+  }
+  return payload.sub;
+}
+
+// ── Get or create Stripe Customer ──────────────────────────
+async function getOrCreateStripeCustomer(
+  clerkUserId: string
+): Promise<string> {
+  // Search for existing customer by Clerk user ID
+  const existing = await stripe.customers.search({
+    query: `metadata["clerk_user_id"]:"${clerkUserId}"`,
+  });
+
+  if (existing.data.length > 0) {
+    return existing.data[0].id;
+  }
+
+  // Create new customer
+  const customer = await stripe.customers.create({
+    metadata: { clerk_user_id: clerkUserId },
+  });
+  return customer.id;
+}
+
+// ── Handle meal order ──────────────────────────────────────
+async function handleMealOrder(
+  clerkUserId: string,
+  cartItems: { mealId: string; qty: number }[]
+) {
+  if (!cartItems || cartItems.length === 0) {
+    throw new Error("cartItems is required and must not be empty");
+  }
+
+  // 1. Look up meal prices from the database
+  const mealIds = cartItems.map((item) => item.mealId);
+  const { data: meals, error: mealsErr } = await supabaseAdmin
+    .from("meals")
+    .select("id, name, price")
+    .in("id", mealIds);
+
+  if (mealsErr) throw new Error("Failed to look up meals: " + mealsErr.message);
+  if (!meals || meals.length === 0) throw new Error("No valid meals found");
+
+  // 2. Calculate total SERVER-SIDE (never trust client amount)
+  const mealMap = new Map(meals.map((m: any) => [m.id, m]));
+  let subTotal = 0;
+  const resolvedItems: { mealId: string; name: string; price: number; qty: number }[] = [];
+
+  for (const item of cartItems) {
+    const meal = mealMap.get(item.mealId);
+    if (!meal) {
+      console.warn(`Meal ${item.mealId} not found in DB, skipping`);
+      continue;
+    }
+    subTotal += meal.price * item.qty;
+    resolvedItems.push({
+      mealId: meal.id,
+      name: meal.name,
+      price: meal.price,
+      qty: item.qty,
+    });
+  }
+
+  if (resolvedItems.length === 0) throw new Error("No valid meals in cart");
+
+  const grandTotal = subTotal + TAX + HEALTH_INSURANCE;
+
+  // 3. Create pending order in the database
+  const orderId = `order-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const { error: insertErr } = await supabaseAdmin.from("orders").insert({
+    id: orderId,
+    items: resolvedItems,
+    total_amount: grandTotal,
+    paid_at: null,
+    user_id: clerkUserId,
+    payment_status: "pending",
+  });
+
+  if (insertErr) throw new Error("Failed to create order: " + insertErr.message);
+
+  return { orderId, grandTotal, description: "GymFood Meal Order", resolvedItems };
+}
+
+// ── Handle consultation order ──────────────────────────────
+async function handleConsultationOrder(
+  clerkUserId: string,
+  planName: string,
+  planImage: string,
+  planNotes: string[]
+) {
+  if (!planName) throw new Error("planName is required");
+
+  // 1. Look up plan price from the database
+  const { data: plan, error: planErr } = await supabaseAdmin
+    .from("subscription_plans")
+    .select("subscription_plan, price")
+    .eq("subscription_plan", planName)
+    .maybeSingle();
+
+  if (planErr) throw new Error("Failed to look up plan: " + planErr.message);
+  if (!plan) throw new Error(`Plan "${planName}" not found`);
+  if (!plan.price || plan.price <= 0) throw new Error(`Plan "${planName}" has no price set`);
+
+  // 2. Create pending consultation order
+  const orderId = `consult-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const { error: insertErr } = await supabaseAdmin
+    .from("consultation_orders")
+    .insert({
+      id: orderId,
+      plan_name: planName,
+      plan_image: planImage || "",
+      plan_notes: planNotes || [],
+      paid_at: null,
+      status: "active",
+      payment_status: "pending",
+      user_id: clerkUserId,
+    });
+
+  if (insertErr) throw new Error("Failed to create consultation order: " + insertErr.message);
+
+  return {
+    orderId,
+    grandTotal: plan.price,
+    description: `GymFood Consultation - ${planName}`,
+  };
+}
+
+// ── Main handler ───────────────────────────────────────────
+serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  try {
+    // 1. Verify caller identity
+    let clerkUserId: string;
+    try {
+      clerkUserId = await verifyClerkJWT(req);
+    } catch (e) {
+      return jsonResponse(401, { error: (e as Error).message });
+    }
+
+    // 2. Parse request
+    const body = await req.json();
+    const { type } = body as { type: "meal" | "consultation" };
+
+    let orderId: string;
+    let grandTotal: number;
+    let description: string;
+
+    // 3. Create pending order + calculate price SERVER-SIDE
+    if (type === "meal") {
+      const result = await handleMealOrder(clerkUserId, body.cartItems);
+      orderId = result.orderId;
+      grandTotal = result.grandTotal;
+      description = result.description;
+    } else if (type === "consultation") {
+      const result = await handleConsultationOrder(
+        clerkUserId,
+        body.planName,
+        body.planImage,
+        body.planNotes
+      );
+      orderId = result.orderId;
+      grandTotal = result.grandTotal;
+      description = result.description;
+    } else {
+      return jsonResponse(400, { error: 'type must be "meal" or "consultation"' });
+    }
+
+    // 4. Get or create Stripe Customer (enables saved cards)
+    const stripeCustomerId = await getOrCreateStripeCustomer(clerkUserId);
+
+    // 5. Create PaymentIntent with idempotency key
+    const paymentIntent = await stripe.paymentIntents.create(
+      {
+        amount: grandTotal,
+        currency: "idr",
+        customer: stripeCustomerId,
+        description,
+        metadata: {
+          clerk_user_id: clerkUserId,
+          order_id: orderId,
+          order_type: type,
+        },
+      },
+      {
+        idempotencyKey: `pi_${orderId}`, // Prevents double charges on retry
+      }
+    );
+
+    // 6. Save the PaymentIntent ID to the order
+    const table = type === "meal" ? "orders" : "consultation_orders";
+    await supabaseAdmin
+      .from(table)
+      .update({ stripe_payment_intent_id: paymentIntent.id })
+      .eq("id", orderId);
+
+    // 7. Create ephemeral key for the customer (needed for Payment Sheet)
+    const ephemeralKey = await stripe.ephemeralKeys.create(
+      { customer: stripeCustomerId },
+      { apiVersion: "2024-06-20" }
+    );
+
+    // 8. Return everything the app needs
+    return jsonResponse(200, {
+      clientSecret: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id,
+      ephemeralKey: ephemeralKey.secret,
+      customerId: stripeCustomerId,
+      orderId,
+      amount: grandTotal,
+    });
+  } catch (err: any) {
+    console.error("[stripe-checkout] error:", err);
+    return jsonResponse(500, { error: err.message || "Internal server error" });
+  }
+});
+```
+
+---
+
+## Step 5 — Create `stripe-webhook` Edge Function (NEW)
+
+**Create file**: `supabase/functions/stripe-webhook/index.ts`
+
+This is the **source of truth** for payment confirmation. Stripe calls this endpoint after payment succeeds or fails.
+
+```typescript
+// @ts-nocheck — Runs on Deno (Supabase Edge Functions)
+// supabase/functions/stripe-webhook/index.ts
+//
+// Handles Stripe webhook events to confirm payments server-side.
+// This is the SOURCE OF TRUTH — it marks orders as "paid" or "failed".
+//
+// Deploy:
+//   supabase secrets set STRIPE_WEBHOOK_SECRET=whsec_XXXX
+//   supabase functions deploy stripe-webhook --no-verify-jwt
+//
+// Secrets required:
+//   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET
+//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (auto-populated)
+
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import Stripe from "npm:stripe@17";
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+const STRIPE_SECRET_KEY = Deno.env.get("STRIPE_SECRET_KEY")!;
+const STRIPE_WEBHOOK_SECRET = Deno.env.get("STRIPE_WEBHOOK_SECRET")!;
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+const stripe = new Stripe(STRIPE_SECRET_KEY, {
+  apiVersion: "2024-06-20",
+  httpClient: Stripe.createFetchHttpClient(),
+});
+
+const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Content-Type, Stripe-Signature",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+      },
+    });
+  }
+
+  try {
+    // 1. Get the raw body and Stripe signature
+    const body = await req.text();
+    const signature = req.headers.get("stripe-signature");
+
+    if (!signature) {
+      return new Response("Missing Stripe signature", { status: 400 });
+    }
+
+    // 2. Verify the webhook signature (CRITICAL — prevents fake events)
+    let event: Stripe.Event;
+    try {
+      event = await stripe.webhooks.constructEventAsync(
+        body,
+        signature,
+        STRIPE_WEBHOOK_SECRET
+      );
+    } catch (err) {
+      console.error("[stripe-webhook] Signature verification failed:", (err as Error).message);
+      return new Response("Invalid signature", { status: 400 });
+    }
+
+    // 3. Handle the event
+    console.log(`[stripe-webhook] Received event: ${event.type}`);
+
+    if (event.type === "payment_intent.succeeded") {
+      const paymentIntent = event.data.object as Stripe.PaymentIntent;
+      const orderId = paymentIntent.metadata.order_id;
+      const orderType = paymentIntent.metadata.order_type; // "meal" or "consultation"
+
+      if (!orderId || !orderType) {
+        console.warn("[stripe-webhook] Missing order metadata, skipping");
+        return new Response("OK", { status: 200 });
+      }
+
+      const table = orderType === "meal" ? "orders" : "consultation_orders";
+
+      // Mark order as paid
+      const { error } = await supabaseAdmin
+        .from(table)
+        .update({
+          payment_status: "paid",
+          paid_at: new Date().toISOString(),
+        })
+        .eq("id", orderId)
+        .eq("payment_status", "pending"); // Only update if still pending (idempotent)
+
+      if (error) {
+        console.error(`[stripe-webhook] Failed to update ${table}:`, error.message);
+      } else {
+        console.log(`[stripe-webhook] ✅ Order ${orderId} marked as paid`);
+      }
+    }
+
+    if (event.type === "payment_intent.payment_failed") {
+      const paymentIntent = event.data.object as Stripe.PaymentIntent;
+      const orderId = paymentIntent.metadata.order_id;
+      const orderType = paymentIntent.metadata.order_type;
+
+      if (orderId && orderType) {
+        const table = orderType === "meal" ? "orders" : "consultation_orders";
+
+        await supabaseAdmin
+          .from(table)
+          .update({ payment_status: "failed" })
+          .eq("id", orderId)
+          .eq("payment_status", "pending");
+
+        console.log(`[stripe-webhook] ❌ Order ${orderId} marked as failed`);
+      }
+    }
+
+    // Always return 200 to acknowledge receipt (Stripe retries on non-2xx)
+    return new Response(JSON.stringify({ received: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err: any) {
+    console.error("[stripe-webhook] error:", err);
+    return new Response("Internal error", { status: 500 });
+  }
+});
+```
+
+---
+
+## Step 6 — Deploy Edge Functions & Configure Webhook
+
+### 6a. Set Supabase secrets
+
+```bash
+# Your Stripe secret key
+supabase secrets set STRIPE_SECRET_KEY=sk_test_XXXX
+
+# Your Clerk issuer URL (check Clerk Dashboard → API Keys → Advanced)
+supabase secrets set CLERK_ISSUER=https://funky-caribou-55.clerk.accounts.dev
+```
+
+### 6b. Deploy both functions
+
+```bash
+supabase functions deploy stripe-checkout --no-verify-jwt
+supabase functions deploy stripe-webhook --no-verify-jwt
+```
+
+### 6c. Set up Stripe webhook (in Stripe Dashboard)
+
+1. Go to **Stripe Dashboard → Developers → Webhooks**
+2. Click **"Add endpoint"**
+3. Set the endpoint URL:
+   ```
+   https://jimwvhfjkrluzznehwwu.supabase.co/functions/v1/stripe-webhook
+   ```
+4. Select events to listen for:
+   - `payment_intent.succeeded`
+   - `payment_intent.payment_failed`
+5. Click **"Add endpoint"**
+6. On the endpoint page, click **"Reveal"** under Signing secret → copy the `whsec_...` value
+
+### 6d. Set the webhook secret
+
+```bash
+supabase secrets set STRIPE_WEBHOOK_SECRET=whsec_XXXX
+```
+
+> [!IMPORTANT]
+> Replace the Supabase URL above with your actual project URL if different. You can find it in your `.env` as `EXPO_PUBLIC_SUPABASE_URL`.
+
+---
+
+## Step 7 — Add Environment Variable + StripeProvider
+
+### 7a. Update `.env`
+
+Add this line to the bottom of [`.env`](file:///c:/Users/ben/Downloads/GymFood-Project/.env):
+
+```
+EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_XXXX
+```
+
+### 7b. Update root layout
+
+**Replace the entire contents** of [`app/_layout.tsx`](file:///c:/Users/ben/Downloads/GymFood-Project/app/_layout.tsx):
+
+```tsx
+import React, { useEffect } from "react";
+import { Stack } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import { useColorScheme } from "react-native";
+import { Colors } from "@shared/constants/Colors";
+import { ClerkProvider, useAuth } from "@clerk/expo";
+import { tokenCache } from "@clerk/expo/token-cache";
+import { StripeProvider } from "@stripe/stripe-react-native";
+import { hydrateOrderHistory } from "@modules/cart/store/useOrderHistoryStore";
+import { hydrateConsultationHistory } from "@modules/consultation/store/useConsultationHistoryStore";
+
+const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
+const stripePublishableKey = process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY!;
+
+if (!publishableKey) {
+  throw new Error(
+    "Missing EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY. Add it to your .env file."
+  );
+}
+
+if (!stripePublishableKey) {
+  throw new Error(
+    "Missing EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY. Add it to your .env file."
+  );
+}
+
+// Hydrates Supabase-backed stores only after Clerk has a session, so the
+// requests carry the user's JWT and pass RLS.
+function HydrateOnAuth() {
+  const { isLoaded, isSignedIn } = useAuth();
+
+  useEffect(() => {
+    if (isLoaded && isSignedIn) {
+      hydrateOrderHistory();
+      hydrateConsultationHistory();
+    }
+  }, [isLoaded, isSignedIn]);
+
+  return null;
+}
+
+export default function RootLayout() {
+  const colorScheme = useColorScheme();
+  const theme = Colors[colorScheme ?? "light"] ?? Colors.light;
+
+  return (
+    <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
+      <StripeProvider publishableKey={stripePublishableKey}>
+        <HydrateOnAuth />
+        <StatusBar style="auto" />
+        <Stack
+          screenOptions={{
+            headerStyle: { backgroundColor: theme.navBackground },
+            headerTintColor: theme.title,
+            headerShown: false,
+          }}
+        >
+          <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+          <Stack.Screen name="index" options={{ title: "Home" }} />
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="(checkout)" options={{ headerShown: false }} />
+          <Stack.Screen name="(review)" options={{ headerShown: false }} />
+        </Stack>
+      </StripeProvider>
+    </ClerkProvider>
+  );
+}
+```
+
+---
+
+## Step 8 — Create `useStripeCheckout` Hook (Production)
+
+**Create file**: [`src/modules/checkout/hooks/useStripeCheckout.ts`](file:///c:/Users/ben/Downloads/GymFood-Project/src/modules/checkout/hooks/useStripeCheckout.ts)
+
+This version sends cart items (not amounts) and receives the server-calculated total.
+
+```typescript
+import { useState, useCallback } from "react";
+import { Alert } from "react-native";
+import { useStripe } from "@stripe/stripe-react-native";
+import { getClerkInstance } from "@clerk/expo";
+
+const STRIPE_CHECKOUT_URL =
+  process.env.EXPO_PUBLIC_SUPABASE_URL +
+  "/functions/v1/stripe-checkout";
+
+// ── Types ──────────────────────────────────────────────────
+
+interface MealPaymentRequest {
+  type: "meal";
+  cartItems: { mealId: string; qty: number }[];
+}
+
+interface ConsultationPaymentRequest {
+  type: "consultation";
+  planName: string;
+  planImage: string;
+  planNotes: string[];
+}
+
+type PaymentRequest = MealPaymentRequest | ConsultationPaymentRequest;
+
+interface PaymentResult {
+  success: boolean;
+  error?: string;
+  orderId?: string;
+  paymentIntentId?: string;
+  amount?: number;
+}
+
+// ── Hook ───────────────────────────────────────────────────
+
+export function useStripeCheckout() {
+  const { initPaymentSheet, presentPaymentSheet } = useStripe();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const initiatePayment = useCallback(
+    async (request: PaymentRequest): Promise<PaymentResult> => {
+      setLoading(true);
+      setError(null);
+
+      try {
+        // ── A. Get Clerk session token ─────────────────
+        const clerkToken = await getClerkInstance().session?.getToken();
+        if (!clerkToken) {
+          throw new Error("Not signed in. Please sign in first.");
+        }
+
+        // ── B. Call Edge Function ──────────────────────
+        //    The server calculates the price and creates a pending order.
+        //    We do NOT send the amount — the server computes it.
+        const response = await fetch(STRIPE_CHECKOUT_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${clerkToken}`,
+          },
+          body: JSON.stringify(request),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to create payment");
+        }
+
+        const {
+          clientSecret,
+          paymentIntentId,
+          ephemeralKey,
+          customerId,
+          orderId,
+          amount,
+        } = data;
+
+        // ── C. Initialize Payment Sheet ────────────────
+        const { error: initError } = await initPaymentSheet({
+          paymentIntentClientSecret: clientSecret,
+          customerEphemeralKeySecret: ephemeralKey,
+          customerId: customerId,
+          merchantDisplayName: "GymFood",
+          style: "automatic",
+          // Uncomment to allow saving cards for future purchases:
+          // allowsDelayedPaymentMethods: false,
+        });
+
+        if (initError) {
+          throw new Error(initError.message);
+        }
+
+        // ── D. Present Payment Sheet ───────────────────
+        const { error: presentError } = await presentPaymentSheet();
+
+        if (presentError) {
+          if (presentError.code === "Canceled") {
+            setLoading(false);
+            return { success: false, error: "Payment cancelled" };
+          }
+          throw new Error(presentError.message);
+        }
+
+        // ── E. Payment succeeded ───────────────────────
+        //    The webhook will confirm this server-side,
+        //    but the Payment Sheet only returns success
+        //    after Stripe confirms the charge.
+        setLoading(false);
+        return { success: true, orderId, paymentIntentId, amount };
+      } catch (err: any) {
+        const errorMessage = err.message || "Payment failed";
+        setError(errorMessage);
+        setLoading(false);
+        Alert.alert("Payment Error", errorMessage);
+        return { success: false, error: errorMessage };
+      }
+    },
+    [initPaymentSheet, presentPaymentSheet]
+  );
+
+  return { initiatePayment, loading, error };
+}
+```
+
+**Key difference from the previous version**: The hook sends `{ type, cartItems }` or `{ type, planName }` — never an amount. The server calculates the total.
+
+---
+
+## Step 9 — Modify OrderDetailScreen
+
+**Replace the entire contents** of [`app/(checkout)/OrderDetailScreen.tsx`](file:///c:/Users/ben/Downloads/GymFood-Project/app/(checkout)/OrderDetailScreen.tsx):
+
+```tsx
+import React, { useState } from "react";
+import { View, StyleSheet, FlatList, Pressable, ActivityIndicator } from "react-native";
+import { router } from "expo-router";
+import MaterialIcons from "@expo/vector-icons/MaterialIcons";
+
+import ThemedView from "@shared/components/ui/ThemedView";
+import ThemedText from "@shared/components/ui/ThemedText";
+import OrderItemCard from "@modules/checkout/components/OrderItemCard";
+import OrderSummaryCard from "@modules/checkout/components/OrderSummaryCard";
+import OrderMap from "@modules/checkout/components/OrderMap";
+
+import { useCartStore } from "@modules/cart/store/useCartStore";
+import { buildCartItems } from "@modules/cart/utils/cartSelectors";
+import { useSupabaseMeals } from "@shared/hooks/useSupabaseMeals";
+import { useOrderHistoryStore } from "@modules/cart/store/useOrderHistoryStore";
+import { useStripeCheckout } from "@modules/checkout/hooks/useStripeCheckout";
+import { CompletedOrder } from "@shared/types/data";
+
+import { SuccessPopup } from "@/shared/components/ui/SuccessPopup";
+
+const TAX = 2000;
+const HEALTH_INSURANCE = 8000;
+
+const formatRupiah = (n: number): string =>
+  `Rp. ${Number(n || 0).toLocaleString("id-ID")}`;
+
+const OrderDetails: React.FC = () => {
+  const cartById = useCartStore((s) => s.cartById);
+  const { meals } = useSupabaseMeals();
+  const cartItems = buildCartItems(cartById, meals);
+
+  const [lat, setLat] = useState(-6.2);
+  const [lng, setLng] = useState(106.8);
+  const [address, setAddress] = useState<string | undefined>();
+
+  // ✅ Stripe
+  const { initiatePayment, loading: stripeLoading } = useStripeCheckout();
+  const [popupVisible, setPopupVisible] = useState(false);
+
+  // Client-side total is display-only. Server recalculates for payment.
+  const subTotalFood = cartItems.reduce(
+    (sum, it) => sum + Number(it.meal?.price ?? 0) * (it.qty ?? 0),
+    0
+  );
+  const grandTotal = subTotalFood + TAX + HEALTH_INSURANCE;
+
+  // ⭐ STRIPE PAYMENT HANDLER
+  const handlePayNow = async () => {
+    // Build cart items as {mealId, qty} pairs — the server looks up prices
+    const cartEntries = Object.entries(useCartStore.getState().cartById).map(
+      ([mealId, qty]) => ({ mealId, qty })
+    );
+
+    const result = await initiatePayment({
+      type: "meal",
+      cartItems: cartEntries,
+    });
+
+    if (result.success) {
+      // ✅ Update local store optimistically
+      // The webhook confirms server-side, but we update the UI immediately.
+      const validItems = cartItems.filter(
+        (it): it is { meal: NonNullable<typeof it.meal>; qty: number } =>
+          !!it.meal
+      );
+      const order: CompletedOrder = {
+        id: result.orderId || `${Date.now()}`,
+        items: validItems as any,
+        totalAmount: result.amount || grandTotal,
+        paidAt: new Date().toISOString(),
+      };
+
+      // Add to local store (skip Supabase insert — the Edge Function already created the order)
+      useOrderHistoryStore.setState((state) => ({
+        orders: [order, ...state.orders],
+      }));
+      useCartStore.getState().clearCart();
+
+      setPopupVisible(true);
+    }
+  };
+
+  const Footer = () => (
+    <View>
+      <OrderSummaryCard items={cartItems.filter((item) => item.meal) as any} />
+
+      <OrderMap
+        latitude={lat}
+        longitude={lng}
+        address={address}
+        onLocationChange={(newLat, newLng, newAddress) => {
+          setLat(newLat);
+          setLng(newLng);
+          if (newAddress) setAddress(newAddress);
+        }}
+      />
+
+      <View style={styles.totalPayRow}>
+        <ThemedText style={styles.totalPayLabel}>TOTAL PAYMENT</ThemedText>
+        <ThemedText style={styles.totalPayValue}>
+          {formatRupiah(grandTotal)}
+        </ThemedText>
+      </View>
+
+      {/* ✅ Pay Now button */}
+      <Pressable
+        onPress={handlePayNow}
+        disabled={stripeLoading}
+        style={({ pressed }) => [
+          styles.payButton,
+          pressed && !stripeLoading && { opacity: 0.85, transform: [{ scale: 0.985 }] },
+          stripeLoading && styles.payButtonDisabled,
+        ]}
+      >
+        {stripeLoading ? (
+          <ActivityIndicator color="#fff" size="small" />
+        ) : (
+          <View style={styles.payButtonContent}>
+            <MaterialIcons name="payment" size={22} color="#fff" />
+            <ThemedText style={styles.payButtonText}>Pay Now</ThemedText>
+            <MaterialIcons name="arrow-forward" size={22} color="#fff" />
+          </View>
+        )}
+      </Pressable>
+    </View>
+  );
+
+  return (
+    <ThemedView style={styles.container}>
+      <View style={styles.overlay}>
+        <View style={styles.headerContainer}>
+          <Pressable onPress={() => router.back()} hitSlop={10}>
+            <MaterialIcons name="arrow-back" size={36} color="#34699A" />
+          </Pressable>
+          <ThemedText style={styles.headerTitle}>Order Details</ThemedText>
+        </View>
+      </View>
+
+      <View style={styles.content}>
+        {cartItems.length === 0 ? (
+          <View style={styles.emptyWrap}>
+            <ThemedText style={styles.emptyText}>No meal was selected</ThemedText>
+          </View>
+        ) : (
+          <FlatList
+            data={cartItems}
+            keyExtractor={(item) => item.meal?.id || "unknown"}
+            showsVerticalScrollIndicator={false}
+            renderItem={({ item }) =>
+              item.meal ? <OrderItemCard meal={item.meal} qty={item.qty} /> : null
+            }
+            ListFooterComponent={<Footer />}
+            contentContainerStyle={{ paddingBottom: 40 }}
+          />
+        )}
+      </View>
+
+      <SuccessPopup
+        visible={popupVisible}
+        onDismiss={() => setPopupVisible(false)}
+        title="Hooray!"
+        message={"Payment has been accepted! We're\npreparing your food now!"}
+        dimOpacity={0.55}
+      />
+    </ThemedView>
+  );
+};
+
+export default OrderDetails;
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  overlay: {
+    position: "absolute",
+    top: 0, left: 0, right: 0,
+    paddingTop: 70, paddingHorizontal: 20,
+    zIndex: 10,
+  },
+  headerContainer: { flexDirection: "row", alignItems: "center", gap: 10 },
+  headerTitle: {
+    fontSize: 25, color: "#34699A", fontFamily: "SF-Pro-DisplayRegular",
+  },
+  content: { paddingTop: 140, paddingHorizontal: 20, flex: 1 },
+  emptyWrap: { flex: 1, justifyContent: "center", alignItems: "center" },
+  emptyText: {
+    fontSize: 18, color: "#34699A",
+    fontFamily: "SF-Pro-DisplayRegular", fontWeight: "600",
+  },
+  totalPayRow: {
+    flexDirection: "row", justifyContent: "space-between",
+    alignItems: "center", marginTop: 18, paddingVertical: 5,
+  },
+  totalPayLabel: {
+    fontSize: 14, color: "#34699A",
+    fontFamily: "SF-Pro-DisplayBold", letterSpacing: 1,
+  },
+  totalPayValue: {
+    fontSize: 20, color: "#34699A", fontFamily: "SF-Pro-DisplayBold",
+  },
+  payButton: {
+    backgroundColor: "#37A446", height: 52, borderRadius: 16,
+    justifyContent: "center", alignItems: "center",
+    marginTop: 16, marginBottom: 10,
+  },
+  payButtonDisabled: { backgroundColor: "#9CA3AF", opacity: 0.6 },
+  payButtonContent: { flexDirection: "row", alignItems: "center", gap: 10 },
+  payButtonText: {
+    color: "#ffffff", fontSize: 16, fontFamily: "SF-Pro-DisplayBold",
+  },
+});
+```
+
+---
+
+## Step 10 — Modify ConsultationPaymentScreen
+
+**Replace the entire contents** of [`app/(checkout)/ConsultationPaymentScreen.tsx`](file:///c:/Users/ben/Downloads/GymFood-Project/app/(checkout)/ConsultationPaymentScreen.tsx):
+
+```tsx
+import React, { useRef, useState } from "react";
+import { View, StyleSheet, Pressable, ActivityIndicator } from "react-native";
+import { router, useLocalSearchParams } from "expo-router";
+import MaterialIcons from "@expo/vector-icons/MaterialIcons";
+
+import ThemedView from "@shared/components/ui/ThemedView";
+import ThemedText from "@shared/components/ui/ThemedText";
+import { SuccessPopup } from "@/shared/components/ui/SuccessPopup";
+
+import { useConsultationHistoryStore } from "@modules/consultation/store/useConsultationHistoryStore";
+import { useStripeCheckout } from "@modules/checkout/hooks/useStripeCheckout";
+import {
+  CompletedConsultationOrder,
+  ConsultationIntake,
+} from "@shared/types/data";
+
+const formatRupiah = (n: number): string =>
+  `Rp. ${Number(n || 0).toLocaleString("id-ID")}`;
+
+// Display-only prices (server looks up actual price from DB)
+const DISPLAY_PRICES: Record<string, number> = {
+  Beginner: 150000,
+  Advanced: 300000,
+  Pro: 500000,
+};
+
+const ConsultationPayment: React.FC = () => {
+  const params = useLocalSearchParams<{
+    planId: string;
+    planImage: string;
+    planNotes: string;
+    intake?: string;
+  }>();
+
+  const planId = params.planId ?? "";
+  const planImage = params.planImage ?? "";
+  const planNotes: string[] = (() => {
+    try { return JSON.parse(params.planNotes ?? "[]"); }
+    catch { return []; }
+  })();
+  const intake: ConsultationIntake | undefined = (() => {
+    if (!params.intake) return undefined;
+    try { return JSON.parse(params.intake); }
+    catch { return undefined; }
+  })();
+
+  // ✅ Stripe
+  const { initiatePayment, loading: stripeLoading } = useStripeCheckout();
+  const [popupVisible, setPopupVisible] = useState(false);
+  const currentOrderRef = useRef<CompletedConsultationOrder | null>(null);
+
+  const displayPrice = DISPLAY_PRICES[planId] ?? 150000;
+
+  // ⭐ STRIPE PAYMENT HANDLER
+  const handlePayNow = async () => {
+    const result = await initiatePayment({
+      type: "consultation",
+      planName: planId,
+      planImage,
+      planNotes,
+    });
+
+    if (result.success) {
+      // ✅ Update local store optimistically
+      const order: CompletedConsultationOrder = {
+        id: result.orderId || `consult-${Date.now()}`,
+        planName: planId,
+        planImage,
+        planNotes,
+        paidAt: new Date().toISOString(),
+        status: "active",
+        intake,
+      };
+
+      // Add to local store (skip Supabase — Edge Function already created the order)
+      useConsultationHistoryStore.setState((state) => ({
+        orders: [order, ...state.orders],
+      }));
+
+      currentOrderRef.current = order;
+      setPopupVisible(true);
+    }
+  };
+
+  return (
+    <ThemedView style={styles.container}>
+      {/* HEADER */}
+      <View style={styles.overlay}>
+        <View style={styles.headerContainer}>
+          <Pressable onPress={() => router.back()} hitSlop={10}>
+            <MaterialIcons name="arrow-back" size={36} color="#34699A" />
+          </Pressable>
+          <ThemedText style={styles.headerTitle}>Payment</ThemedText>
+        </View>
+      </View>
+
+      {/* CONTENT */}
+      <View style={styles.content}>
+        <View style={styles.planCard}>
+          <ThemedText style={styles.planTitle}>{planId} Plan</ThemedText>
+          {planNotes.map((note, i) => (
+            <ThemedText key={i} style={styles.planNote}>{note}</ThemedText>
+          ))}
+          <View style={styles.priceRow}>
+            <ThemedText style={styles.priceLabel}>Total</ThemedText>
+            <ThemedText style={styles.priceValue}>
+              {formatRupiah(displayPrice)}
+            </ThemedText>
+          </View>
+        </View>
+
+        {/* ✅ Pay Now */}
+        <Pressable
+          onPress={handlePayNow}
+          disabled={stripeLoading}
+          style={({ pressed }) => [
+            styles.payButton,
+            pressed && !stripeLoading && { opacity: 0.85, transform: [{ scale: 0.985 }] },
+            stripeLoading && styles.payButtonDisabled,
+          ]}
+        >
+          {stripeLoading ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <View style={styles.payButtonContent}>
+              <MaterialIcons name="payment" size={22} color="#fff" />
+              <ThemedText style={styles.payButtonText}>Pay Now</ThemedText>
+              <MaterialIcons name="arrow-forward" size={22} color="#fff" />
+            </View>
+          )}
+        </Pressable>
+      </View>
+
+      <SuccessPopup
+        visible={popupVisible}
+        onDismiss={() => {
+          setPopupVisible(false);
+          if (currentOrderRef.current) {
+            router.replace({
+              pathname: "/(tabs)/consultation/ChatScreen",
+              params: {
+                orderId: currentOrderRef.current.id,
+                planName: currentOrderRef.current.planName,
+                ...(intake ? { intake: JSON.stringify(intake) } : {}),
+              },
+            });
+          }
+        }}
+        title="Hooray!"
+        message={"Payment has been accepted!\nEnjoy your program!"}
+        dimOpacity={0.55}
+      />
+    </ThemedView>
+  );
+};
+
+export default ConsultationPayment;
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  overlay: {
+    position: "absolute", top: 0, left: 0, right: 0,
+    paddingTop: 70, paddingHorizontal: 20, zIndex: 10,
+  },
+  headerContainer: { flexDirection: "row", alignItems: "center", gap: 10 },
+  headerTitle: { fontSize: 25, color: "#34699A", fontFamily: "SF-Pro-DisplayRegular" },
+  content: { paddingTop: 140, paddingHorizontal: 20, flex: 1 },
+  planCard: {
+    backgroundColor: "#fff", borderRadius: 16, padding: 20,
+    shadowColor: "#000", elevation: 3, marginBottom: 20,
+  },
+  planTitle: {
+    fontSize: 20, color: "#34699A", fontFamily: "SF-Pro-DisplayBold", marginBottom: 12,
+  },
+  planNote: {
+    fontSize: 14, color: "#34699A", fontFamily: "SF-Pro-DisplayRegular",
+    marginBottom: 6, lineHeight: 20,
+  },
+  priceRow: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    marginTop: 16, paddingTop: 14, borderTopWidth: 1, borderTopColor: "#E5E7EB",
+  },
+  priceLabel: {
+    fontSize: 14, color: "#34699A", fontFamily: "SF-Pro-DisplayBold", letterSpacing: 1,
+  },
+  priceValue: { fontSize: 20, color: "#34699A", fontFamily: "SF-Pro-DisplayBold" },
+  payButton: {
+    backgroundColor: "#37A446", height: 52, borderRadius: 16,
+    justifyContent: "center", alignItems: "center",
+  },
+  payButtonDisabled: { backgroundColor: "#9CA3AF", opacity: 0.6 },
+  payButtonContent: { flexDirection: "row", alignItems: "center", gap: 10 },
+  payButtonText: { color: "#ffffff", fontSize: 16, fontFamily: "SF-Pro-DisplayBold" },
+});
+```
+
+---
+
+## Final Checklist
+
+- [ ] **Step 1**: Stripe test keys obtained (`pk_test_...` and `sk_test_...`)
+- [ ] **Step 2**: `npm install @stripe/stripe-react-native`
+- [ ] **Step 3**: SQL migration run in Supabase Dashboard
+- [ ] **Step 4**: `supabase/functions/stripe-checkout/index.ts` created
+- [ ] **Step 5**: `supabase/functions/stripe-webhook/index.ts` created
+- [ ] **Step 6a**: Supabase secrets set (`STRIPE_SECRET_KEY`, `CLERK_ISSUER`)
+- [ ] **Step 6b**: Both functions deployed
+- [ ] **Step 6c**: Webhook endpoint added in Stripe Dashboard
+- [ ] **Step 6d**: `STRIPE_WEBHOOK_SECRET` secret set
+- [ ] **Step 7a**: `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY` added to `.env`
+- [ ] **Step 7b**: `app/_layout.tsx` updated with `<StripeProvider>`
+- [ ] **Step 8**: `src/modules/checkout/hooks/useStripeCheckout.ts` created
+- [ ] **Step 9**: `app/(checkout)/OrderDetailScreen.tsx` updated
+- [ ] **Step 10**: `app/(checkout)/ConsultationPaymentScreen.tsx` updated
+- [ ] **Rebuild**: `npx expo run:android`
+
+## Test Cards
+
+| Card Number | Result |
+|---|---|
+| `4242 4242 4242 4242` | ✅ Succeeds |
+| `4000 0000 0000 0002` | ❌ Declined |
+| `4000 0025 0000 3155` | 🔐 Requires 3D Secure |
+
+Use any future expiry (e.g. `12/34`) and any CVC (e.g. `123`).
+
+## Verify
+
+1. **App**: Tap Pay Now → Stripe sheet → test card → success popup
+2. **Stripe Dashboard**: [Payments page](https://dashboard.stripe.com/test/payments) shows the payment
+3. **Supabase**: Check `orders` table — `payment_status` should be `paid` (set by webhook)
+4. **Stripe Dashboard**: [Webhooks page](https://dashboard.stripe.com/test/webhooks) shows successful delivery
+
+## Troubleshooting
+
+| Issue | Fix |
+|---|---|
+| `Missing Bearer token` | User not signed in via Clerk |
+| `Failed to look up meals` | Meal IDs in cart don't match DB — check `meals` table |
+| `Plan "X" has no price set` | Run the migration SQL to add prices to `subscription_plans` |
+| Payment succeeds but `payment_status` stays `pending` | Webhook not configured — check Step 6c/6d |
+| `Invalid signature` in webhook logs | `STRIPE_WEBHOOK_SECRET` doesn't match — re-copy from Stripe Dashboard |
+| Payment Sheet doesn't open | Rebuild native app: `npx expo run:android` |
+
+## Going Live
+
+When ready for production:
+
+1. Toggle Stripe Dashboard out of **Test mode**
+2. Get live keys (`pk_live_...`, `sk_live_...`)
+3. Update secrets: `supabase secrets set STRIPE_SECRET_KEY=sk_live_...`
+4. Update `.env`: `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_...`
+5. Create a new live webhook endpoint with the production URL
+6. Update: `supabase secrets set STRIPE_WEBHOOK_SECRET=whsec_...(live)`
+7. Rebuild and submit to app stores

@@ -12,6 +12,7 @@
     "@clerk/expo": "^3.1.5",
     "@gorhom/bottom-sheet": "^5.2.7",
     "@hookform/resolvers": "^5.2.2",
+    "@stripe/stripe-react-native": "^0.75.0",
     "@supabase/supabase-js": "^2.105.1",
     "expo": "~54.0.25",
     "expo-auth-session": "~7.0.10",

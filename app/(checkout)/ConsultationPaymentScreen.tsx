@@ -1,21 +1,28 @@
-import React, { useEffect, useRef, useState } from "react";
-import { View, StyleSheet, Pressable, FlatList, Animated } from "react-native";
+import React, { useRef, useState } from "react";
+import { View, StyleSheet, Pressable, ActivityIndicator } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 
 import ThemedView from "@shared/components/ui/ThemedView";
 import ThemedText from "@shared/components/ui/ThemedText";
-
-import BankAccountCard, {
-  BankAccountData,
-} from "@/modules/checkout/components/BankAccountCard";
-import bankAccounts from "@/data/bankAccount";
-
-import { LoadingOverlay } from "@/shared/components/ui/LoadingOverlay";
 import { SuccessPopup } from "@/shared/components/ui/SuccessPopup";
 
 import { useConsultationHistoryStore } from "@modules/consultation/store/useConsultationHistoryStore";
-import { CompletedConsultationOrder, ConsultationIntake } from "@shared/types/data";
+import { useStripeCheckout } from "@modules/checkout/hooks/useStripeCheckout";
+import {
+  CompletedConsultationOrder,
+  ConsultationIntake,
+} from "@shared/types/data";
+
+const formatRupiah = (n: number): string =>
+  `Rp. ${Number(n || 0).toLocaleString("id-ID")}`;
+
+// Display-only prices (server looks up actual price from DB)
+const DISPLAY_PRICES: Record<string, number> = {
+  Beginner: 150000,
+  Advanced: 300000,
+  Pro: 500000,
+};
 
 const ConsultationPayment: React.FC = () => {
   const params = useLocalSearchParams<{
@@ -27,122 +34,53 @@ const ConsultationPayment: React.FC = () => {
 
   const planId = params.planId ?? "";
   const planImage = params.planImage ?? "";
-  // planNotes is passed as JSON-encoded string
   const planNotes: string[] = (() => {
-    try {
-      return JSON.parse(params.planNotes ?? "[]");
-    } catch {
-      return [];
-    }
+    try { return JSON.parse(params.planNotes ?? "[]"); }
+    catch { return []; }
   })();
-  // intake captured from ProgramDetailScreen — forwarded to chat so Coach Jim
-  // already knows the user's concerns, allergies, diet, and goals.
   const intake: ConsultationIntake | undefined = (() => {
     if (!params.intake) return undefined;
-    try {
-      return JSON.parse(params.intake);
-    } catch {
-      return undefined;
-    }
+    try { return JSON.parse(params.intake); }
+    catch { return undefined; }
   })();
 
-  const data = bankAccounts as BankAccountData[];
-
-  // ✅ Toast state + animation
-  const [toastVisible, setToastVisible] = useState(false);
-  const opacity = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(12)).current;
-
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // ✅ Loading + Popup
-  const [loadingVisible, setLoadingVisible] = useState(false);
+  // ✅ Stripe
+  const { initiatePayment, loading: stripeLoading } = useStripeCheckout();
   const [popupVisible, setPopupVisible] = useState(false);
-
-  const loadingDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const loadingDoneRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentOrderRef = useRef<CompletedConsultationOrder | null>(null);
 
-  const clearAllTimers = () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    if (loadingDelayRef.current) clearTimeout(loadingDelayRef.current);
-    if (loadingDoneRef.current) clearTimeout(loadingDoneRef.current);
+  const displayPrice = DISPLAY_PRICES[planId] ?? 150000;
 
-    timerRef.current = null;
-    loadingDelayRef.current = null;
-    loadingDoneRef.current = null;
+  // ⭐ STRIPE PAYMENT HANDLER
+  const handlePayNow = async () => {
+    const result = await initiatePayment({
+      type: "consultation",
+      planName: planId,
+      planImage,
+      planNotes,
+    });
+
+    if (result.success) {
+      // ✅ Update local store optimistically
+      const order: CompletedConsultationOrder = {
+        id: result.orderId || `consult-${Date.now()}`,
+        planName: planId,
+        planImage,
+        planNotes,
+        paidAt: new Date().toISOString(),
+        status: "active",
+        intake,
+      };
+
+      // Add to local store (skip Supabase — Edge Function already created the order)
+      useConsultationHistoryStore.setState((state) => ({
+        orders: [order, ...state.orders],
+      }));
+
+      currentOrderRef.current = order;
+      setPopupVisible(true);
+    }
   };
-
-  const showToast = () => {
-    clearAllTimers();
-    setLoadingVisible(false);
-    setPopupVisible(false);
-
-    setToastVisible(true);
-
-    Animated.parallel([
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: 160,
-        useNativeDriver: true,
-      }),
-      Animated.timing(translateY, {
-        toValue: 0,
-        duration: 160,
-        useNativeDriver: true,
-      }),
-    ]).start();
-
-    timerRef.current = setTimeout(() => {
-      Animated.parallel([
-        Animated.timing(opacity, {
-          toValue: 0,
-          duration: 160,
-          useNativeDriver: true,
-        }),
-        Animated.timing(translateY, {
-          toValue: 12,
-          duration: 160,
-          useNativeDriver: true,
-        }),
-      ]).start(({ finished }) => {
-        if (!finished) return;
-
-        setToastVisible(false);
-
-        loadingDelayRef.current = setTimeout(() => {
-          setLoadingVisible(true);
-
-          loadingDoneRef.current = setTimeout(() => {
-            setLoadingVisible(false);
-
-            // ✅ Save consultation order to history
-            const order: CompletedConsultationOrder = {
-              id: `consult-${Date.now()}`,
-              planName: planId,
-              planImage,
-              planNotes,
-              paidAt: new Date().toISOString(),
-              status: "active",
-              intake,
-            };
-            useConsultationHistoryStore.getState().addOrder(order);
-
-            setPopupVisible(true);
-
-            // Store the order ID for navigation after popup dismiss
-            currentOrderRef.current = order;
-          }, 2500);
-        }, 700);
-      });
-    }, 1600);
-  };
-
-  useEffect(() => {
-    return () => {
-      clearAllTimers();
-    };
-  }, []);
 
   return (
     <ThemedView style={styles.container}>
@@ -152,50 +90,51 @@ const ConsultationPayment: React.FC = () => {
           <Pressable onPress={() => router.back()} hitSlop={10}>
             <MaterialIcons name="arrow-back" size={36} color="#34699A" />
           </Pressable>
-
           <ThemedText style={styles.headerTitle}>Payment</ThemedText>
         </View>
       </View>
 
-      {/* LIST */}
-      <FlatList
-        data={data}
-        keyExtractor={(item) =>
-          `${item.bank_account.bank_name}-${item.bank_account.account_number}`
-        }
-        contentContainerStyle={styles.listContent}
-        renderItem={({ item }) => (
-          <BankAccountCard data={item} onCopy={showToast} />
-        )}
-        showsVerticalScrollIndicator={false}
-      />
-
-      {/* TOAST BAR */}
-      {toastVisible && (
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.toastWrap,
-            { opacity, transform: [{ translateY }] },
-          ]}
-        >
-          <View style={styles.toastBar}>
-            <ThemedText style={styles.toastText}>
-              Copied to Clipboard
+      {/* CONTENT */}
+      <View style={styles.content}>
+        <View style={styles.planCard}>
+          <ThemedText style={styles.planTitle}>{planId} Plan</ThemedText>
+          {planNotes.map((note, i) => (
+            <ThemedText key={i} style={styles.planNote}>{note}</ThemedText>
+          ))}
+          <View style={styles.priceRow}>
+            <ThemedText style={styles.priceLabel}>Total</ThemedText>
+            <ThemedText style={styles.priceValue}>
+              {formatRupiah(displayPrice)}
             </ThemedText>
           </View>
-        </Animated.View>
-      )}
+        </View>
 
-      {/* LOADING OVERLAY */}
-      <LoadingOverlay visible={loadingVisible} label="Loading" dimOpacity={0.45} />
+        {/* ✅ Pay Now */}
+        <Pressable
+          onPress={handlePayNow}
+          disabled={stripeLoading}
+          style={({ pressed }) => [
+            styles.payButton,
+            pressed && !stripeLoading && { opacity: 0.85, transform: [{ scale: 0.985 }] },
+            stripeLoading && styles.payButtonDisabled,
+          ]}
+        >
+          {stripeLoading ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <View style={styles.payButtonContent}>
+              <MaterialIcons name="payment" size={22} color="#fff" />
+              <ThemedText style={styles.payButtonText}>Pay Now</ThemedText>
+              <MaterialIcons name="arrow-forward" size={22} color="#fff" />
+            </View>
+          )}
+        </Pressable>
+      </View>
 
-      {/* ✅ SUCCESS POPUP */}
       <SuccessPopup
         visible={popupVisible}
         onDismiss={() => {
           setPopupVisible(false);
-          // Navigate to chat screen with the active session
           if (currentOrderRef.current) {
             router.replace({
               pathname: "/(tabs)/consultation/ChatScreen",
@@ -219,61 +158,37 @@ export default ConsultationPayment;
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-
   overlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    paddingTop: 70,
-    paddingHorizontal: 20,
-    zIndex: 10,
+    position: "absolute", top: 0, left: 0, right: 0,
+    paddingTop: 70, paddingHorizontal: 20, zIndex: 10,
   },
-
-  headerContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
+  headerContainer: { flexDirection: "row", alignItems: "center", gap: 10 },
+  headerTitle: { fontSize: 25, color: "#34699A", fontFamily: "SF-Pro-DisplayRegular" },
+  content: { paddingTop: 140, paddingHorizontal: 20, flex: 1 },
+  planCard: {
+    backgroundColor: "#fff", borderRadius: 16, padding: 20,
+    shadowColor: "#000", elevation: 3, marginBottom: 20,
   },
-
-  headerTitle: {
-    fontSize: 25,
-    color: "#34699A",
-    fontFamily: "SF-Pro-DisplayRegular",
+  planTitle: {
+    fontSize: 20, color: "#34699A", fontFamily: "SF-Pro-DisplayBold", marginBottom: 12,
   },
-
-  listContent: {
-    paddingTop: 140,
-    paddingBottom: 120,
+  planNote: {
+    fontSize: 14, color: "#34699A", fontFamily: "SF-Pro-DisplayRegular",
+    marginBottom: 6, lineHeight: 20,
   },
-
-  toastWrap: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 80,
-    alignItems: "center",
-    zIndex: 999,
+  priceRow: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    marginTop: 16, paddingTop: 14, borderTopWidth: 1, borderTopColor: "#E5E7EB",
   },
-
-  toastBar: {
-    backgroundColor: "#354044",
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-    borderRadius: 4,
-    minWidth: 160,
-
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 10,
+  priceLabel: {
+    fontSize: 14, color: "#34699A", fontFamily: "SF-Pro-DisplayBold", letterSpacing: 1,
   },
-
-  toastText: {
-    color: "#fff",
-    fontSize: 16,
-    fontFamily: "SF-Pro-DisplayRegular",
-    textAlign: "center",
+  priceValue: { fontSize: 20, color: "#34699A", fontFamily: "SF-Pro-DisplayBold" },
+  payButton: {
+    backgroundColor: "#37A446", height: 52, borderRadius: 16,
+    justifyContent: "center", alignItems: "center",
   },
+  payButtonDisabled: { backgroundColor: "#9CA3AF", opacity: 0.6 },
+  payButtonContent: { flexDirection: "row", alignItems: "center", gap: 10 },
+  payButtonText: { color: "#ffffff", fontSize: 16, fontFamily: "SF-Pro-DisplayBold" },
 });

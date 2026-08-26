@@ -1,0 +1,246 @@
+# Stripe Integration — Step-by-Step Plan
+
+## How It Works (Big Picture)
+
+```mermaid
+sequenceDiagram
+    participant User as 📱 User (App)
+    participant RN as React Native
+    participant Edge as Supabase Edge Function
+    participant Stripe as Stripe API
+    
+    User->>RN: Taps "Pay Now"
+    RN->>Edge: POST /stripe-checkout {amount, orderId}
+    Edge->>Edge: Verify Clerk JWT
+    Edge->>Stripe: stripe.paymentIntents.create({amount, currency: 'idr'})
+    Stripe-->>Edge: {clientSecret}
+    Edge-->>RN: {clientSecret}
+    RN->>RN: initPaymentSheet({clientSecret})
+    RN->>RN: presentPaymentSheet()
+    User->>Stripe: Enters card → submits
+    Stripe-->>RN: ✅ Payment succeeded
+    RN->>RN: Save order, clear cart, show success popup
+```
+
+---
+
+## Step 1 — Get Your Stripe Keys
+
+**What**: Create a Stripe account and get test-mode API keys.
+
+**How**:
+1. Go to [https://dashboard.stripe.com/register](https://dashboard.stripe.com/register) and create an account (or log in)
+2. In the dashboard, toggle to **"Test mode"** (top-right switch)
+3. Go to **Developers → API keys**
+4. Copy two keys:
+   - **Publishable key** — starts with `pk_test_...` (this goes in the app)
+   - **Secret key** — starts with `sk_test_...` (this goes in the Edge Function, **never** in the app)
+
+**Result**: You have `pk_test_XXXX` and `sk_test_XXXX` ready.
+
+---
+
+## Step 2 — Install Stripe SDK in the App
+
+**What**: Add the `@stripe/stripe-react-native` package to the project.
+
+**How**:
+```bash
+npm install @stripe/stripe-react-native
+```
+
+**Why**: This package gives us:
+- `<StripeProvider>` — wraps the app to initialize Stripe
+- `useStripe()` — hook with `initPaymentSheet()` and `presentPaymentSheet()`
+- The **Payment Sheet** — a pre-built, secure UI for entering card details
+
+**What changes**: Only [`package.json`](file:///c:/Users/ben/Downloads/GymFood-Project/package.json) and `package-lock.json`.
+
+> [!IMPORTANT]
+> After installing, you'll need to rebuild the native app (`npx expo run:android`) since this package includes native modules.
+
+---
+
+## Step 3 — Create the Supabase Edge Function
+
+**What**: A new server-side function at `supabase/functions/stripe-checkout/index.ts` that creates a Stripe PaymentIntent.
+
+**Why it's needed**: The Stripe **Secret Key** must stay on the server. The app can't talk to Stripe directly to create payments — it needs this middleman.
+
+**How it works** (inside the function):
+
+```
+Step 3a: Receive request from app → { amount, description, orderId }
+Step 3b: Verify the Clerk JWT from the Authorization header (same as stream-token)
+Step 3c: Call Stripe API → stripe.paymentIntents.create({ amount, currency: 'idr' })
+Step 3d: Return { clientSecret } to the app
+```
+
+**File**: [`supabase/functions/stripe-checkout/index.ts`](file:///c:/Users/ben/Downloads/GymFood-Project/supabase/functions/stripe-checkout/index.ts) — **NEW**
+
+**Deploy**:
+```bash
+# Set the secret key (one-time)
+supabase secrets set STRIPE_SECRET_KEY=sk_test_XXXX
+
+# Deploy the function
+supabase functions deploy stripe-checkout --no-verify-jwt
+```
+
+---
+
+## Step 4 — Add StripeProvider to Root Layout
+
+**What**: Wrap the entire app with `<StripeProvider>` so any screen can use Stripe.
+
+**File**: [`app/_layout.tsx`](file:///c:/Users/ben/Downloads/GymFood-Project/app/_layout.tsx) — **MODIFY**
+
+**Before**:
+```tsx
+<ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
+  <HydrateOnAuth />
+  <StatusBar style="auto" />
+  <Stack ...>
+    ...
+  </Stack>
+</ClerkProvider>
+```
+
+**After**:
+```tsx
+import { StripeProvider } from "@stripe/stripe-react-native";
+
+<ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
+  <StripeProvider publishableKey={process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY!}>
+    <HydrateOnAuth />
+    <StatusBar style="auto" />
+    <Stack ...>
+      ...
+    </Stack>
+  </StripeProvider>
+</ClerkProvider>
+```
+
+**Also add to `.env`**:
+```
+EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_XXXX
+```
+
+---
+
+## Step 5 — Create the `useStripeCheckout` Hook
+
+**What**: A reusable hook that handles the entire Stripe payment flow in 3 function calls.
+
+**File**: [`src/modules/checkout/hooks/useStripeCheckout.ts`](file:///c:/Users/ben/Downloads/GymFood-Project/src/modules/checkout/hooks/useStripeCheckout.ts) — **NEW**
+
+**What it does**:
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  useStripeCheckout()                                     │
+│                                                          │
+│  Returns:                                                │
+│    • initiatePayment(amount, description) → result       │
+│    • loading: boolean                                    │
+│    • error: string | null                                │
+│                                                          │
+│  Inside initiatePayment():                               │
+│    1. Get Clerk token                                    │
+│    2. POST to stripe-checkout Edge Function               │
+│    3. Receive clientSecret                               │
+│    4. Call initPaymentSheet({ clientSecret })             │
+│    5. Call presentPaymentSheet()                         │
+│    6. Return { success: true } or { success: false }     │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Why a hook**: Both the meal order screen and the consultation screen need to take payments. This hook makes the logic reusable — each screen just calls `initiatePayment(amount, description)`.
+
+---
+
+## Step 6 — Modify OrderDetailScreen
+
+**What**: Replace the BCA/GoPay/QRIS payment method cards with a single "Pay Now" button that triggers Stripe.
+
+**File**: [`app/(checkout)/OrderDetailScreen.tsx`](file:///c:/Users/ben/Downloads/GymFood-Project/app/(checkout)/OrderDetailScreen.tsx) — **MODIFY**
+
+**Current flow**:
+```
+User sees order summary → taps BCA → goes to PaymentScreen → copies bank account number 
+→ fake loading → success popup
+```
+
+**New flow**:
+```
+User sees order summary → taps "Pay Now" → Stripe Payment Sheet opens 
+→ enters card details → payment processed → success popup
+```
+
+**Specific changes**:
+1. Import `useStripeCheckout` hook
+2. Replace the `paymentMethods.map()` section with a single "Pay Now" button
+3. On press: call `initiatePayment(grandTotal, "GymFood Meal Order")`
+4. On success: save order to store/Supabase, clear cart, show `SuccessPopup`
+5. On failure: show error message, stay on screen
+
+---
+
+## Step 7 — Modify ConsultationPaymentScreen
+
+**What**: Same treatment — replace bank account list with Stripe Payment Sheet.
+
+**File**: [`app/(checkout)/ConsultationPaymentScreen.tsx`](file:///c:/Users/ben/Downloads/GymFood-Project/app/(checkout)/ConsultationPaymentScreen.tsx) — **MODIFY**
+
+**Current flow**:
+```
+Shows bank account cards → user copies number → fake loading → success → navigate to chat
+```
+
+**New flow**:
+```
+Shows plan summary + "Pay Now" button → Stripe Payment Sheet → success → navigate to chat
+```
+
+**Existing behavior preserved**: After successful payment, it still saves the consultation order and navigates to the Coach Jim chat screen.
+
+---
+
+## Summary of All Changes
+
+| Step | File | Action | What |
+|------|------|--------|------|
+| 2 | `package.json` | MODIFY | Add `@stripe/stripe-react-native` |
+| 3 | `supabase/functions/stripe-checkout/index.ts` | **NEW** | Edge Function to create PaymentIntents |
+| 4 | `.env` | MODIFY | Add `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY` |
+| 4 | `app/_layout.tsx` | MODIFY | Wrap app with `<StripeProvider>` |
+| 5 | `src/modules/checkout/hooks/useStripeCheckout.ts` | **NEW** | Reusable Stripe payment hook |
+| 6 | `app/(checkout)/OrderDetailScreen.tsx` | MODIFY | Replace payment methods with Stripe button |
+| 7 | `app/(checkout)/ConsultationPaymentScreen.tsx` | MODIFY | Replace bank transfer with Stripe |
+
+---
+
+## What You Need to Provide
+
+Before I start coding, I need:
+
+1. **Your Stripe test Publishable Key** (`pk_test_...`) — or I can use a placeholder and you fill it in later
+2. **Your Stripe test Secret Key** (`sk_test_...`) — for the Edge Function secret
+3. **Confirm**: Should I proceed with replacing **all** existing payment methods (BCA, GoPay, QRIS) with Stripe?
+
+---
+
+## Verification Plan
+
+### Build Test
+```bash
+npx expo run:android
+```
+
+### Manual Testing
+1. Go to checkout → Order Details → tap "Pay Now"
+2. Stripe Payment Sheet opens
+3. Use test card: `4242 4242 4242 4242`, any future expiry, any CVC
+4. Payment succeeds → order saved → success popup → cart cleared
+5. Check [Stripe Dashboard](https://dashboard.stripe.com/test/payments) to see the payment
+6. Test declined card: `4000 0000 0000 0002` → error shown, stays on screen
