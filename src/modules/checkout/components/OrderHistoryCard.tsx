@@ -30,7 +30,9 @@ const OrderHistoryCard: React.FC<OrderHistoryCardProps> = ({
   // Each item in the order becomes its own card row
   return (
     <>
-      {order.items.map((item, index) => (
+      {order.items
+        .filter((item) => item?.meal)
+        .map((item, index) => (
         <Pressable
           key={`${order.id}-${index}`}
           style={({ pressed }) => [styles.card, { opacity: pressed ? 0.85 : 1 }]}
